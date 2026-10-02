@@ -19,6 +19,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
 from config import APEX_LOGO, BG_IMAGE, title
 import widgets.auth_backend as auth
+import widgets.firebase_backend as fb
 
 # ── Shared GCS palette (keep in sync with config.py STYLE) ───────────────────
 _BG       = "#020617"
@@ -45,14 +46,20 @@ def _system_boot_time() -> float:
     except Exception:
         return 0.0
 
-def _save_session(email: str, password: str) -> None:
-    """Write credentials to the temp session file."""
+def _save_session(email: str, refresh_token: str) -> None:
+    """
+    Remember the signed-in user across restarts.
+
+    Stores a Firebase refresh token, not the password. The old version wrote
+    the password here in plain text; a refresh token is scoped to this account
+    and can be revoked from the Firebase console if a machine is lost.
+    """
     try:
         os.makedirs(os.path.dirname(_SESSION_FILE), exist_ok=True)
         with open(_SESSION_FILE, "w") as f:
             json.dump({
                 "email": email,
-                "password": password,
+                "refreshToken": refresh_token,
                 "stay": True,
                 "boot_time": _system_boot_time(),   # stamp current boot
             }, f)
@@ -64,7 +71,7 @@ def _load_session() -> dict:
     try:
         with open(_SESSION_FILE, "r") as f:
             data = json.load(f)
-        if not (data.get("stay") and data.get("email") and data.get("password")):
+        if not (data.get("stay") and data.get("email") and data.get("refreshToken")):
             return {}
         # Reject session if it was saved before the current boot
         saved_boot = data.get("boot_time", 0)
@@ -172,68 +179,90 @@ def _labelled_input(parent_layout, label_text, placeholder="",
 # ══════════════════════════════════════════════════════════════════════════════
 #  OTP Dialog  (small popup)
 # ══════════════════════════════════════════════════════════════════════════════
-class _OtpDialog(QtWidgets.QDialog):
-    """Generic OTP-entry popup. Returns accepted() if OTP matches."""
+class _VerifyEmailDialog(QtWidgets.QDialog):
+    """
+    Waits for the Firebase verification link to be clicked.
 
-    def __init__(self, parent, expected_otp: str, title="Verify OTP",
-                 extra_field_label: str = None):
+    Replaces the old 6-digit OTP box. The code behind that box was generated
+    locally and emailed by the app itself through Gmail, which is why a sender
+    address and app password had to be compiled into every build. Firebase
+    sends this one, so there is no credential left to leak.
+
+    Polls rather than asking the user to press anything: the ID token's
+    email_verified claim does not change in a token already issued, so a fresh
+    one is minted each poll and that is also what the dialog hands back.
+    """
+
+    def __init__(self, parent, session: dict, email: str):
         super().__init__(parent)
-        self.expected_otp     = expected_otp
-        self.extra_field_text = ""
+        self.session = session
+        self._email = email
+        self._elapsed = 0
 
-        self.setWindowTitle(title)
-        self.setFixedSize(360, 260 if extra_field_label else 200)
+        self.setWindowTitle("Verify Email")
         self.setModal(True)
-        self.setStyleSheet(_BASE_STYLE + f"""
-            QDialog {{ background: {_BG}; border: 1px solid {_BORDER};
-                       border-radius: 10px; }}
-        """)
+        self.setFixedWidth(420)
+        self.setStyleSheet(_BASE_STYLE)
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(10)
+        lay.setSpacing(12)
 
-        hdr = QtWidgets.QLabel(title)
-        hdr.setStyleSheet(f"color:{_ACCENT}; font-size:14px; font-weight:bold;")
-        lay.addWidget(hdr)
+        title = QtWidgets.QLabel("Check your inbox")
+        title.setStyleSheet(f"color:{_ACCENT}; font-size:16px; font-weight:bold;")
+        lay.addWidget(title)
 
-        self.otp_input = _labelled_input(lay, "Enter OTP sent to your email",
-                                         "6-digit OTP")
+        body = QtWidgets.QLabel(
+            "We've emailed a verification link to<br><b>{}</b><br><br>"
+            "Open it, then come back here — this window closes by itself "
+            "once it's confirmed.".format(email))
+        body.setWordWrap(True)
+        body.setStyleSheet(f"color:{_TEXT}; font-size:12px;")
+        lay.addWidget(body)
 
-        if extra_field_label:
-            self.extra_input = _labelled_input(
-                lay, extra_field_label, "New password",
-                echo=QtWidgets.QLineEdit.Password)
-        else:
-            self.extra_input = None
+        self._status = QtWidgets.QLabel("Waiting for confirmation…")
+        self._status.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        lay.addWidget(self._status)
 
-        btn = QtWidgets.QPushButton("Verify")
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                background: {_ACCENT}; color: {_BG};
-                border: none; border-radius: 5px;
-                padding: 8px; font-weight: bold;
-            }}
-            QPushButton:hover {{ background: #7dd3fc; }}
-        """)
-        btn.clicked.connect(self._verify)
-        lay.addWidget(btn)
+        row = QtWidgets.QHBoxLayout()
+        self._resend = QtWidgets.QPushButton("Resend Email")
+        self._resend.clicked.connect(self._do_resend)
+        row.addWidget(self._resend)
+        cancel = QtWidgets.QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        row.addWidget(cancel)
+        lay.addLayout(row)
 
-    def _verify(self):
-        if self.otp_input.text().strip() == self.expected_otp:
-            if self.extra_input:
-                self.extra_field_text = self.extra_input.text().strip()
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._poll)
+        self._timer.start(3000)
+
+    def _poll(self):
+        self._elapsed += 3
+        try:
+            fresh = fb.refresh_session(self.session)
+            info = fb.account_info(fresh["idToken"])
+        except fb.AuthError:
+            return                      # transient; keep waiting
+        if info.get("emailVerified"):
+            self.session = fresh
+            self._timer.stop()
             self.accept()
-        else:
-            QtWidgets.QMessageBox.critical(self, "Error", "Invalid OTP")
+            return
+        mins, secs = divmod(self._elapsed, 60)
+        self._status.setText(
+            "Waiting for confirmation… ({}:{:02d})".format(mins, secs))
 
-    def get_extra(self) -> str:
-        return self.extra_field_text
+    def _do_resend(self):
+        self._resend.setEnabled(False)
+        try:
+            fb.send_verification_email(self.session["idToken"])
+            self._status.setText("Verification email sent again.")
+        except fb.AuthError as exc:
+            self._status.setText(str(exc))
+        QtCore.QTimer.singleShot(30000, lambda: self._resend.setEnabled(True))
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Page 0 — Login form  (right-panel widget)
-# ══════════════════════════════════════════════════════════════════════════════
 class _LoginPage(QtWidgets.QWidget):
     # Signals emitted to LoginWindow
     login_success   = QtCore.pyqtSignal(str)   # carries the logged-in email
@@ -244,6 +273,52 @@ class _LoginPage(QtWidgets.QWidget):
         super().__init__()
         self._session = session
         self._build()
+        # Resume after the window has painted, so a slow network shows the
+        # login form rather than a frozen blank panel.
+        QtCore.QTimer.singleShot(0, self._try_resume)
+
+    def _try_resume(self):
+        """
+        Sign back in from the saved refresh token, if there is one.
+
+        Also where this computer discovers it has been signed out: if the
+        licence's deviceId has moved to another machine, the saved session is
+        dropped and the user is told why. That is the whole of the
+        one-computer-at-a-time rule on this side — no polling, so nothing eats
+        into Firestore's free daily write quota.
+        """
+        token = self._session.get("refreshToken")
+        if not token:
+            return
+        try:
+            session = fb.refresh_session({
+                "refreshToken": token,
+                "email": self._session.get("email", ""),
+                "uid": "",
+            })
+            info = fb.account_info(session["idToken"])
+            if not info.get("emailVerified"):
+                return
+            session["uid"] = info["uid"]
+            session["email"] = info["email"]
+
+            profile = fb.fetch_profile(session)
+            licence = (profile or {}).get("licenceKey", "")
+            if not licence:
+                return
+
+            ok, msg = fb.device_still_ours(session, licence)
+            if not ok:
+                _clear_session()
+                self._session.clear()
+                QtWidgets.QMessageBox.information(self, "Signed Out", msg)
+                return
+
+            fb.check_entitlement(session, licence)
+        except fb.AuthError:
+            return      # offline or expired — fall back to the normal form
+        fb.set_current_session(session)
+        self.login_success.emit(session["email"])
 
     def _build(self):
         lay = QtWidgets.QVBoxLayout(self)
@@ -275,8 +350,8 @@ class _LoginPage(QtWidgets.QWidget):
             lay, "Password", "••••••••",
             echo=QtWidgets.QLineEdit.Password)
 
-        if self._session.get("password"):
-            self.pwd_inp.setText(self._session["password"])
+        # No password pre-fill any more: nothing stores it. "Stay signed in"
+        # now resumes from the saved refresh token instead (see _try_resume).
 
         # Show Password checkbox
         show_cb = QtWidgets.QCheckBox("Show Password")
@@ -346,23 +421,59 @@ class _LoginPage(QtWidgets.QWidget):
                                           "Please enter email and password.")
             return
 
-        ok = auth.login(email, pwd)
-        if ok:
-            # Update session memory
-            if self.stay_cb.isChecked():
-                self._session.update(
-                    {"email": email, "password": pwd, "stay": True})
-                _save_session(email, pwd)   # persist across app restarts
-            else:
-                self._session.clear()
-                _clear_session()            # remove any old saved session
-            # Log the login event to ActiveUsers sheet (non-blocking)
-            import threading as _t
-            _t.Thread(target=auth.log_user_login, args=(email,), daemon=True).start()
-            self.login_success.emit(email)
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            session = fb.sign_in(email, pwd)
+
+            if not fb.account_info(session["idToken"]).get("emailVerified"):
+                QtWidgets.QApplication.restoreOverrideCursor()
+                QtWidgets.QMessageBox.warning(
+                    self, "Email Not Verified",
+                    "Please confirm the verification link we emailed to\n"
+                    + email + "\n\nThen sign in again.")
+                try:
+                    fb.send_verification_email(session["idToken"])
+                except fb.AuthError:
+                    pass
+                return
+
+            profile = fb.fetch_profile(session)
+            licence = (profile or {}).get("licenceKey", "")
+            if not licence:
+                QtWidgets.QApplication.restoreOverrideCursor()
+                QtWidgets.QMessageBox.critical(
+                    self, "No Licence",
+                    "This account has no APEX GCS licence attached.\n\n"
+                    "Sign up again with the licence key emailed to you, or "
+                    "contact APEX.")
+                return
+
+            # Re-checked on every sign-in, so a cancelled licence stops working
+            # and signing in here is what signs any other computer out.
+            ok, msg = fb.check_entitlement(session, licence)
+        except fb.AuthError as exc:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            QtWidgets.QMessageBox.critical(self, "Login Failed", str(exc))
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        if not ok:
+            QtWidgets.QMessageBox.critical(self, "Licence Error", msg)
+            return
+
+        # Only the email is remembered now. The old code wrote the password to
+        # a temp file in plain text; the refresh token below is scoped, and is
+        # revocable from the Firebase console.
+        if self.stay_cb.isChecked():
+            self._session.update({"email": email, "stay": True})
+            _save_session(email, session.get("refreshToken", ""))
         else:
-            QtWidgets.QMessageBox.critical(
-                self, "Login Failed", "Invalid email or password.")
+            self._session.clear()
+            _clear_session()
+
+        fb.set_current_session(session)
+        self.login_success.emit(email)
 
     def _do_forgot(self):
         email = self.email_inp.text().strip()
@@ -371,28 +482,21 @@ class _LoginPage(QtWidgets.QWidget):
                 self, "No email", "Enter your email in the field above first.")
             return
 
-        otp = auth.send_otp(email)
-        if otp is None:
-            QtWidgets.QMessageBox.critical(
-                self, "Error", "Failed to send OTP. Check your internet connection.")
-            return
-
-        dlg = _OtpDialog(self, otp,
-                         title="Reset Password",
-                         extra_field_label="New Password")
-        if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            new_pwd = dlg.get_extra()
-            if not new_pwd:
-                QtWidgets.QMessageBox.warning(
-                    self, "Error", "New password cannot be empty.")
+        # Firebase sends and handles the reset itself, so there is no OTP to
+        # generate here and no mail credential in the build. Deliberately says
+        # the same thing whether or not the address exists, so this can't be
+        # used to find out who has an account.
+        try:
+            fb.send_password_reset(email)
+        except fb.AuthError as exc:
+            if "No account found" not in str(exc):
+                QtWidgets.QMessageBox.critical(self, "Error", str(exc))
                 return
-            ok = auth.reset_password(email, new_pwd)
-            if ok:
-                QtWidgets.QMessageBox.information(
-                    self, "Success", "Password updated! Please sign in.")
-            else:
-                QtWidgets.QMessageBox.critical(
-                    self, "Error", "Email not found in records.")
+        QtWidgets.QMessageBox.information(
+            self, "Check Your Email",
+            "If an account exists for\n" + email + "\n\n"
+            "a password reset link is on its way. Open it, set a new "
+            "password, then sign in here.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -649,6 +753,18 @@ class _SignUpPage(QtWidgets.QWidget):
         self.country_inp = _labelled_input(lay, "Country",      "India")
         self.pin_inp     = _labelled_input(lay, "Pincode",      "560001")
 
+        # Licence key, emailed when the CubeSat order was fulfilled. Checked
+        # against the email above before any verification mail goes out, so a
+        # mismatch is reported immediately rather than after a round trip.
+        self.licence_inp = _labelled_input(
+            lay, "Licence Key", "APEX-XXXXX-XXXXX-XXXXX-XXXXX")
+        self.licence_inp.setToolTip(
+            "The licence key emailed to you when your CubeSat order was confirmed.\n"
+            "It only works with the email address the order was placed with.")
+        _hint = QtWidgets.QLabel("Sent to your order email when your CubeSat shipped.")
+        _hint.setStyleSheet(f"color:{_MUTED}; font-size:10px;")
+        lay.addWidget(_hint)
+
         # Terms checkbox row — checkbox + "I agree to the" + clickable link
         terms_row = QtWidgets.QHBoxLayout()
         terms_row.setSpacing(4)
@@ -750,31 +866,79 @@ class _SignUpPage(QtWidgets.QWidget):
                 self, "Password Mismatch", "Passwords do not match.")
             return
 
-        if auth.email_exists(email):
+        licence = fb.normalise_key(self.licence_inp.text())
+        if not licence:
             QtWidgets.QMessageBox.warning(
-                self, "Already Registered",
-                "This email is already in use. Please sign in.")
+                self, "Missing Licence Key",
+                "Please enter the licence key emailed to you when your "
+                "CubeSat order was confirmed.")
             return
 
-        otp = auth.send_otp(email)
-        if otp is None:
-            QtWidgets.QMessageBox.critical(
-                self, "Error",
-                "Failed to send OTP. Check your internet connection.")
-            return
-
-        dlg = _OtpDialog(self, otp, title="Verify Email")
-        if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            ok = auth.signup(name, email, pwd, inst, city, state, cntry, pin)
-            if ok:
-                QtWidgets.QMessageBox.information(
-                    self, "Account Created",
-                    "Account created successfully! Please sign in.")
-                self.signup_done.emit()
-            else:
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            # Create the account first: the licence can only be read by the
+            # address it was issued to, so we need to be signed in as that
+            # address before we can tell whether the key matches.
+            session = fb.sign_up(email, pwd)
+            licence_doc = fb.fetch_licence(session["idToken"], licence)
+            if licence_doc is None:
+                QtWidgets.QApplication.restoreOverrideCursor()
                 QtWidgets.QMessageBox.critical(
-                    self, "Error",
-                    "Failed to create account. Please try again.")
+                    self, "Licence Does Not Match",
+                    "That licence key does not match this email address.\n\n"
+                    "Use the same address your CubeSat order was placed with.")
+                return
+            if licence_doc.get("status") != "active":
+                QtWidgets.QApplication.restoreOverrideCursor()
+                QtWidgets.QMessageBox.critical(
+                    self, "Licence Cancelled",
+                    "This licence has been cancelled.\n\n"
+                    "Please contact APEX to have it reactivated.")
+                return
+            if licence_doc.get("uid"):
+                QtWidgets.QApplication.restoreOverrideCursor()
+                QtWidgets.QMessageBox.critical(
+                    self, "Licence Already Used",
+                    "This licence has already been activated on another "
+                    "account.\n\nContact APEX if you need it moved.")
+                return
+
+            fb.send_verification_email(session["idToken"])
+        except fb.AuthError as exc:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            QtWidgets.QMessageBox.critical(self, "Sign Up Failed", str(exc))
+            return
+        finally:
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        dlg = _VerifyEmailDialog(self, session, email)
+        if dlg.exec_() != QtWidgets.QDialog.Accepted:
+            return
+
+        session = dlg.session       # refreshed, so it carries email_verified
+        try:
+            ok, msg = fb.check_entitlement(session, licence)
+            if not ok:
+                QtWidgets.QMessageBox.critical(self, "Licence Error", msg)
+                return
+            fb.save_profile(session, {
+                "name": name, "institution": inst, "city": city,
+                "state": state, "country": cntry, "pincode": pin,
+                "licenceKey": licence,
+            })
+        except fb.AuthError as exc:
+            QtWidgets.QMessageBox.critical(self, "Sign Up Failed", str(exc))
+            return
+
+        # The Drive backup folder is unrelated to licensing; never block on it.
+        import threading as _t
+        _t.Thread(target=auth.create_user_drive_folder,
+                  args=(email,), daemon=True).start()
+
+        QtWidgets.QMessageBox.information(
+            self, "Account Created",
+            "Account created and licence activated. Please sign in.")
+        self.signup_done.emit()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1008,7 +1172,7 @@ class LoginWindow(QtWidgets.QDialog):
         if self._session.get("stay"):
             saved_email = self._session.get("email", "")
             import threading as _t
-            _t.Thread(target=auth.log_user_login, args=(saved_email,), daemon=True).start()
+            pass   # lastLoginAt is stamped by fb.check_entitlement on resume
             QtCore.QTimer.singleShot(
                 0, lambda: self._on_login_success(saved_email))
 
@@ -1508,8 +1672,14 @@ class UserProfileDialog(QtWidgets.QDialog):
         self._profile_ready.connect(self._on_profile_loaded)
 
         def worker():
-            info = auth.get_user_info(self._email)
-            url  = auth.get_user_drive_url(self._email)
+            info = None
+            session = fb.current_session()
+            if session:
+                try:
+                    info = fb.fetch_profile(fb.ensure_fresh(session))
+                except fb.AuthError:
+                    info = None
+            url = auth.get_user_drive_url(self._email)
             self._profile_ready.emit(info, url)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1552,7 +1722,7 @@ class UserProfileDialog(QtWidgets.QDialog):
         if reply == "Logout":
             # Log the logout event to ActiveUsers sheet (non-blocking)
             import threading as _t
-            _t.Thread(target=auth.log_user_logout, args=(self._email,), daemon=True).start()
+            _t.Thread(target=fb.log_logout, daemon=True).start()
             self.logout_requested.emit()
             self.accept()
 

@@ -16,7 +16,6 @@ _cv_d,  _cv_b,  _cv_h  = collect_all('cv2')
 added_files = [
     ("images",                      "images"),
     ("models",                      "models"),
-    ("widgets/credentials.json",    "widgets"),
     ("widgets/drive_oauth.json",    "widgets"),
     ("widgets/drive_token.pickle",  "widgets"),
 ]
@@ -65,13 +64,6 @@ a = Analysis(
             "pickle",
             "webbrowser",
 
-            "gspread",
-            "gspread.exceptions",
-
-            "oauth2client",
-            "oauth2client.service_account",
-            "oauth2client.crypt",
-
             "googleapiclient",
             "googleapiclient.discovery",
             "googleapiclient.http",
@@ -84,8 +76,7 @@ a = Analysis(
 
             "httplib2",
 
-            "smtplib",
-            "email.mime.text",
+            "requests",
 
 
             # ===== Detection dependencies =====

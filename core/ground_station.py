@@ -24,6 +24,8 @@ import time
 import zlib
 from datetime import datetime
 
+import widgets.firebase_backend as fb
+
 import openpyxl
 import serial
 import serial.tools.list_ports
@@ -828,7 +830,7 @@ class GroundStation(QtWidgets.QMainWindow):
         _clear_session()
         if self.user_email:
             import widgets.auth_backend as auth
-            auth.log_user_logout(self.user_email)
+            fb.log_logout()
         # Stop serial so we don't leave the port open
         try:
             self.serial_timer.stop()
@@ -878,13 +880,13 @@ class GroundStation(QtWidgets.QMainWindow):
                 if reply == "Save & Exit":
                     if self.user_email:
                         import widgets.auth_backend as auth
-                        auth.log_user_logout(self.user_email)
+                        fb.log_logout()
                     self.right._save_mission()
                     QtWidgets.QApplication.quit()
                 elif reply == "Discard & Exit":
                     if self.user_email:
                         import widgets.auth_backend as auth
-                        auth.log_user_logout(self.user_email)
+                        fb.log_logout()
                     self._mission_saved = True
                     try:
                         if os.path.exists(self.temp_path):
@@ -896,7 +898,7 @@ class GroundStation(QtWidgets.QMainWindow):
             else:
                 if self.user_email:
                     import widgets.auth_backend as auth
-                    auth.log_user_logout(self.user_email)
+                    fb.log_logout()
                 event.accept()
                 QtWidgets.QApplication.quit()
 
