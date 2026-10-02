@@ -214,7 +214,7 @@ class _VerifyEmailDialog(QtWidgets.QDialog):
 
         body = QtWidgets.QLabel(
             "We've emailed a verification link to<br><b>{}</b><br><br>"
-            "Open it, then come back here — this window closes by itself "
+            "Open it, then come back here. This window closes by itself "
             "once it's confirmed.".format(email))
         body.setWordWrap(True)
         body.setStyleSheet(f"color:{_TEXT}; font-size:12px;")

@@ -294,7 +294,7 @@ def _build_txt_report(img_path: str, detections: list, summary: str,
     counts = _class_counts(detections)
     lines = [
         sep,
-        "  APEX GCS — OBJECT DETECTION REPORT",
+        "  APEX GCS OBJECT DETECTION REPORT",
         sep,
         f"  Timestamp       : {ts}",
         f"  Image           : {Path(img_path).name}",
@@ -362,7 +362,7 @@ class _DetectWorker(QtCore.QThread):
             img_bgr = cv2.imread(self.img_path)
             if img_bgr is None:
                 raise ValueError(
-                    "Could not decode this image — the downlink was most likely "
+                    "Could not decode this image. The downlink was most likely "
                     "incomplete, leaving a truncated JPEG."
                 )
             H, W = img_bgr.shape[:2]
@@ -434,7 +434,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("APEX GCS — Object Detection")
+        self.setWindowTitle("APEX GCS Object Detection")
         self.setMinimumSize(1060, 680)
         self.setModal(True)
         self.setStyleSheet(self._build_stylesheet())
@@ -749,7 +749,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
             self._categories = categories
             usable = len([c for c in categories if c not in ("N/A", "__background__")])
             self._set_status("● READY  [Faster R-CNN R50-FPN v2 (COCO)]", "#44cc44")
-            self._bottom_lbl.setText(f"Model ready — {usable} detectable classes")
+            self._bottom_lbl.setText(f"Model ready, {usable} detectable classes")
             return True
         except Exception as exc:
             import traceback
@@ -819,7 +819,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
             bgr = cv2.imread(path)
             if bgr is None:
                 raise ValueError(
-                    "Could not decode this image — the downlink was most likely "
+                    "Could not decode this image. The downlink was most likely "
                     "incomplete, leaving a truncated JPEG."
                 )
             self._show_bgr(bgr)
@@ -893,7 +893,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._progress.setVisible(False)
         self._btn_test.setEnabled(True)
         self._bottom_lbl.setText(
-            f"Detection complete — {len(detections)} object(s) found  |  {elapsed_ms:.0f} ms"
+            f"Detection complete, {len(detections)} object(s) found  |  {elapsed_ms:.0f} ms"
         )
 
     @QtCore.pyqtSlot(str)
