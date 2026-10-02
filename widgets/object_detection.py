@@ -770,10 +770,10 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
                 "Please load an image first (Last Captured or Upload)."
             )
             return
-        if self._detector is None:
+        if not self._ensure_model():
             QtWidgets.QMessageBox.warning(
-                self, "Model Not Ready",
-                "The detection model is still loading or failed to load.\n"
+                self, "Model Not Available",
+                "The detection model could not be loaded.\n"
                 f"Expected path: {MODEL_PATH}"
             )
             return
