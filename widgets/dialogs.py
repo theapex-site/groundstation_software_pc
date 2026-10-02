@@ -263,10 +263,166 @@ class _VerifyEmailDialog(QtWidgets.QDialog):
         QtCore.QTimer.singleShot(30000, lambda: self._resend.setEnabled(True))
 
 
+class _ReauthPage(QtWidgets.QWidget):
+    """
+    Shown when the account is fine but the licence is not.
+
+    Happens whenever APEX issues a new key: Regenerate Key kills the old one
+    immediately, so the next launch lands here instead of dumping the customer
+    back at a password prompt they cannot get past. Cancel Subscription lands
+    here too, so the moment a replacement key is issued they can paste it in
+    without reinstalling or signing up again.
+
+    Only the key is asked for. The account is already signed in via the saved
+    refresh token, so there is nothing a password would add, and Firestore
+    still has to agree the key belongs to this address before anything opens.
+    """
+
+    reauth_success = QtCore.pyqtSignal(str)   # carries the email
+    go_login       = QtCore.pyqtSignal()
+
+    def __init__(self, session: dict):
+        super().__init__()
+        self._session = session          # the on-disk session (refresh token)
+        self._fb_session = None          # live Firebase session, once refreshed
+        self._build()
+
+    def _build(self):
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(46, 40, 46, 40)
+        lay.setSpacing(8)
+        lay.addStretch()
+
+        title = QtWidgets.QLabel("Licence Required")
+        title.setStyleSheet(
+            f"color:{_ACCENT}; font-size:22px; font-weight:bold; letter-spacing:1px;")
+        lay.addWidget(title)
+
+        sub = QtWidgets.QLabel("APEX Ground Control Station")
+        sub.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        lay.addWidget(sub)
+        lay.addSpacing(10)
+
+        self._reason = QtWidgets.QLabel(
+            "Your licence key is no longer valid. Enter the key APEX sent you "
+            "to continue.")
+        self._reason.setWordWrap(True)
+        self._reason.setStyleSheet(f"color:{_TEXT}; font-size:12px;")
+        lay.addWidget(self._reason)
+        lay.addSpacing(12)
+
+        self.email_inp = _labelled_input(lay, "Email", "your@email.com")
+        self.licence_inp = _labelled_input(
+            lay, "Licence Key", "APEX-XXXXX-XXXXX-XXXXX-XXXXX")
+        self.licence_inp.returnPressed.connect(self._do_auth)
+
+        hint = QtWidgets.QLabel("Check your email for the latest key from APEX.")
+        hint.setStyleSheet(f"color:{_MUTED}; font-size:10px;")
+        lay.addWidget(hint)
+        lay.addSpacing(14)
+
+        self.auth_btn = QtWidgets.QPushButton("Authenticate")
+        self.auth_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        self.auth_btn.setStyleSheet(f"""
+            QPushButton {{
+                background:{_ACCENT}; color:{_BG}; border:none; border-radius:6px;
+                padding:10px; font-size:13px; font-weight:bold;
+            }}
+            QPushButton:hover {{ background:#7dd3fc; }}
+            QPushButton:disabled {{ background:#1e293b; color:#475569; }}
+        """)
+        self.auth_btn.clicked.connect(self._do_auth)
+        lay.addWidget(self.auth_btn)
+
+        other = QtWidgets.QPushButton("Sign in as someone else")
+        other.setFlat(True)
+        other.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
+        other.setStyleSheet(
+            f"QPushButton {{ color:{_MUTED}; font-size:11px; border:none;"
+            f" background:transparent; text-decoration:underline; }}"
+            f"QPushButton:hover {{ color:{_ACCENT}; }}")
+        other.clicked.connect(self._use_other_account)
+        lay.addWidget(other)
+
+        lay.addStretch()
+
+    def prepare(self, email: str, fb_session, reason: str = ""):
+        """Called by LoginWindow just before this page is shown."""
+        self._fb_session = fb_session
+        self.email_inp.setText(email or "")
+        self.licence_inp.clear()
+        if reason:
+            self._reason.setText(reason + "\n\nEnter the key APEX sent you to continue.")
+        self.licence_inp.setFocus()
+
+    def _use_other_account(self):
+        _clear_session()
+        self._session.clear()
+        fb.set_current_session({})
+        self.go_login.emit()
+
+    def _do_auth(self):
+        email = self.email_inp.text().strip().lower()
+        key = fb.normalise_key(self.licence_inp.text())
+        if not email or not key:
+            ThemedMessageBox.warning(
+                self, "Missing Details",
+                "Enter both your email address and your licence key.")
+            return
+
+        self.auth_btn.setEnabled(False)
+        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        try:
+            session = self._fb_session
+            if session is None:
+                token = self._session.get("refreshToken")
+                if not token:
+                    raise fb.AuthError("Your session has expired. Please sign in again.")
+                session = fb.refresh_session({
+                    "refreshToken": token, "email": email, "uid": ""})
+                info = fb.account_info(session["idToken"])
+                session["uid"] = info["uid"]
+                session["email"] = info["email"]
+
+            # The signed-in account is the one the key must belong to. Saying so
+            # plainly beats a generic mismatch error, which would look identical
+            # to mistyping the key.
+            if session.get("email") and email != session["email"]:
+                QtWidgets.QApplication.restoreOverrideCursor()
+                ThemedMessageBox.warning(
+                    self, "Different Account",
+                    "This computer is signed in as " + session["email"] + ".",
+                    "To use a licence issued to " + email +
+                    ", choose ‘Sign in as someone else’ below.")
+                return
+
+            ok, msg = fb.check_entitlement(session, key)
+        except fb.AuthError as exc:
+            QtWidgets.QApplication.restoreOverrideCursor()
+            ThemedMessageBox.critical(self, "Could Not Authenticate", str(exc))
+            self.go_login.emit()
+            return
+        finally:
+            self.auth_btn.setEnabled(True)
+            QtWidgets.QApplication.restoreOverrideCursor()
+
+        if not ok:
+            ThemedMessageBox.critical(self, "Licence Not Valid", msg)
+            return
+
+        fb.set_current_session(session)
+        fb.save_profile(session, {"licenceKey": key})
+        if self._session.get("stay"):
+            _save_session(session["email"], session.get("refreshToken", ""))
+        self.reauth_success.emit(session["email"])
+
+
 class _LoginPage(QtWidgets.QWidget):
     # Signals emitted to LoginWindow
     login_success   = QtCore.pyqtSignal(str)   # carries the logged-in email
     go_signup       = QtCore.pyqtSignal()
+    # (email, live firebase session, why) -> the licence needs re-entering
+    needs_reauth    = QtCore.pyqtSignal(str, object, str)
 
     def __init__(self, session: dict):
         """session dict is shared with LoginWindow for Stay-Signed-In."""
@@ -309,9 +465,16 @@ class _LoginPage(QtWidgets.QWidget):
 
             ok, msg = fb.device_still_ours(session, licence)
             if not ok:
-                _clear_session()
-                self._session.clear()
-                QtWidgets.QMessageBox.information(self, "Signed Out", msg)
+                # A licence that was regenerated or cancelled is recoverable:
+                # APEX issues a new key and the customer pastes it in. Being
+                # signed in on another computer is not, so that still drops
+                # the saved session and sends them back to the sign-in form.
+                if "another computer" in msg.lower():
+                    _clear_session()
+                    self._session.clear()
+                    ThemedMessageBox.information(self, "Signed Out", msg)
+                else:
+                    self.needs_reauth.emit(session["email"], session, msg)
                 return
 
             fb.check_entitlement(session, licence)
@@ -441,11 +604,9 @@ class _LoginPage(QtWidgets.QWidget):
             licence = (profile or {}).get("licenceKey", "")
             if not licence:
                 QtWidgets.QApplication.restoreOverrideCursor()
-                QtWidgets.QMessageBox.critical(
-                    self, "No Licence",
-                    "This account has no APEX GCS licence attached.\n\n"
-                    "Sign up again with the licence key emailed to you, or "
-                    "contact APEX.")
+                self.needs_reauth.emit(
+                    session["email"], session,
+                    "This account has no APEX GCS licence attached.")
                 return
 
             # Re-checked on every sign-in, so a cancelled licence stops working
@@ -459,7 +620,7 @@ class _LoginPage(QtWidgets.QWidget):
             QtWidgets.QApplication.restoreOverrideCursor()
 
         if not ok:
-            QtWidgets.QMessageBox.critical(self, "Licence Error", msg)
+            self.needs_reauth.emit(session["email"], session, msg)
             return
 
         # Only the email is remembered now. The old code wrote the password to
@@ -1152,14 +1313,20 @@ class LoginWindow(QtWidgets.QDialog):
         self._login_page  = _LoginPage(self._session)
         self._signup_page = _SignUpPage()
         self._com_page    = _ComPortPage()
+        self._reauth_page = _ReauthPage(self._session)
 
         self._stack.addWidget(self._login_page)    # index 0
         self._stack.addWidget(self._signup_page)   # index 1
         self._stack.addWidget(self._com_page)      # index 2
+        self._stack.addWidget(self._reauth_page)   # index 3
 
         # Wire signals
         self._login_page.login_success.connect(self._on_login_success)
         self._login_page.go_signup.connect(lambda: self._stack.setCurrentIndex(1))
+        self._login_page.needs_reauth.connect(self._on_needs_reauth)
+
+        self._reauth_page.reauth_success.connect(self._on_login_success)
+        self._reauth_page.go_login.connect(lambda: self._stack.setCurrentIndex(0))
 
         self._signup_page.go_login.connect(lambda: self._stack.setCurrentIndex(0))
         self._signup_page.signup_done.connect(lambda: self._stack.setCurrentIndex(0))
@@ -1168,19 +1335,22 @@ class LoginWindow(QtWidgets.QDialog):
 
         root_lay.addWidget(self._stack)
 
-        # ── Auto-login if a valid saved session exists ─────────────────────────        
-        if self._session.get("stay"):
-            saved_email = self._session.get("email", "")
-            import threading as _t
-            pass   # lastLoginAt is stamped by fb.check_entitlement on resume
-            QtCore.QTimer.singleShot(
-                0, lambda: self._on_login_success(saved_email))
+        # Resuming a saved session is _LoginPage._try_resume's job: it only
+        # emits login_success once the licence has actually been checked.
+        # There used to be a second auto-login here that skipped straight past
+        # that, which let a revoked licence through whenever "stay signed in"
+        # was ticked.
 
     # ── Slot handlers ─────────────────────────────────────────────────────────
     def _on_login_success(self, email: str = ""):
         """Store the logged-in email and switch to the COM port page."""
         self._logged_in_email = email
         self._stack.setCurrentIndex(2)
+
+    def _on_needs_reauth(self, email: str, session, reason: str):
+        """Licence gone or replaced: ask for the new key rather than giving up."""
+        self._reauth_page.prepare(email, session, reason)
+        self._stack.setCurrentIndex(3)
 
     def _on_port_selected(self, port: str):
         if port == "No ports found" or not port:
