@@ -1,0 +1,24 @@
+# ── Secrets — never commit ─────────────────────────────────────────
+# Google service-account key, OAuth client secret and cached token.
+# These are currently extractable from shipped builds; they must not
+# also end up in git history.
+widgets/credentials.json
+widgets/drive_oauth.json
+widgets/drive_token.pickle
+*.pem
+.env
+
+# ── Build output ───────────────────────────────────────────────────
+build/
+dist/
+*.spec.bak
+
+# ── Python ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ── Runtime data written by the app ────────────────────────────────
+APEX_GCS_Saved/
