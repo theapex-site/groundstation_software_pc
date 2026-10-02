@@ -8,6 +8,9 @@ widgets/drive_token.pickle
 *.pem
 .env
 
+# ── Large model weights — fetch with tools/fetch_model.py ──────────
+models/*.pth
+
 # ── Build output ───────────────────────────────────────────────────
 build/
 dist/

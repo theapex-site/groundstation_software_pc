@@ -1,28 +1,36 @@
 """
-widgets/debris_detection.py
+widgets/object_detection.py
 ────────────────────────────
-APEX GCS — Debris Detection Dialog
+APEX GCS — Object Detection Dialog
 
-A PyQt5 popup dialog that performs YOLO-based debris detection on images.
+A PyQt5 popup dialog that performs object detection on downlinked images.
 
 Features:
-  - Triggered from "📤 Start Debris Detection" button in RightPanel
+  - Triggered from "📤 Start Object Detection" button in RightPanel
   - "Last Captured" button auto-loads latest image from APEX_GCS_Saved/images/camera/
   - Upload button for manual image selection
   - Live annotated preview with coloured bounding boxes
-  - Full metrics panel: confidence, risk, area, bbox coords, centroid, aspect ratio, etc.
-  - "Test" button runs YOLO detection
-  - "Save" button saves annotated image → APEX_GCS_Saved/images/debrie_detect/
-    and a matching .txt report (same stem as image) in the same folder
-  - Model loaded from:  models/best.pt
+  - Full metrics panel: confidence, class, area, bbox coords, centroid, aspect ratio, etc.
+  - "Test" button runs detection
+  - "Save" button saves annotated image → APEX_GCS_Saved/images/object_detect/
+    and a matching .txt report (same stem) in the same folder
+
+Model:
+  torchvision Faster R-CNN ResNet50-FPN v2, COCO-pretrained (80 classes).
+  Weights are bundled at models/fasterrcnn_resnet50_fpn_v2_coco.pth so the app
+  never needs to download anything at runtime.
+
+  torchvision is BSD-3-Clause. The previous Ultralytics YOLO backend was
+  AGPL-3.0, which is incompatible with shipping APEX GCS as a commercial
+  closed-source product without an Ultralytics Enterprise Licence.
 
 Save structure:
   APEX_GCS_Saved/
     images/
       camera/          ← camera captures (existing)
-      debrie_detect/   ← debris detection outputs (new)
-        IMG_xxx_debris.jpg
-        IMG_xxx_debris.txt   ← plain-text report (same stem)
+      object_detect/   ← object detection outputs
+        IMG_xxx_detect.jpg
+        IMG_xxx_detect.txt   ← plain-text report (same stem)
 """
 
 from __future__ import annotations
@@ -31,7 +39,6 @@ import datetime
 import math
 import os
 import sys
-import threading
 from pathlib import Path
 
 from PyQt5 import QtCore, QtGui, QtWidgets
@@ -44,66 +51,63 @@ if getattr(sys, "frozen", False):
 else:
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-MODEL_PATH   = os.path.join(BASE_PATH, "models", "best.pt")
+MODEL_PATH   = os.path.join(BASE_PATH, "models", "fasterrcnn_resnet50_fpn_v2_coco.pth")
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 CAMERA_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "camera")
-DEBRIS_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "debrie_detect")
+DETECT_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "object_detect")
+_LEGACY_DIR  = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "debrie_detect")
 
-# ── Risk palette (matches GCS stylesheet accent colours) ─────────────────────
-RISK_COLOR_BGR = {
-    "CRITICAL": (0,   0,   220),
-    "HIGH":     (0,  120,  255),
-    "MEDIUM":   (0,  200,  255),
-    "LOW":      (50, 200,   50),
-    "NONE":     (80, 200,   80),
+# Horizontal field of view of the CubeSat camera (OV2640 on the ESP32-CAM is
+# ~65°). Used only to express bounding-box size as an angular measurement.
+CAMERA_FOV_DEG = 65.0
+
+# ── Confidence palette (matches GCS stylesheet accent colours) ───────────────
+# Replaces the old debris risk grading: with a generic COCO model there is no
+# collision risk to score, so detections are banded by detector confidence.
+CONF_COLOR_BGR = {
+    "HIGH":   (50, 200,  50),
+    "MEDIUM": (0,  200, 255),
+    "LOW":    (0,  120, 255),
+    "NONE":   (80, 200,  80),
 }
-RISK_COLOR_QT = {
-    "CRITICAL": "#ff4444",
-    "HIGH":     "#ff8800",
-    "MEDIUM":   "#ffdd00",
-    "LOW":      "#44cc44",
-    "NONE":     "#44cc44",
+CONF_COLOR_QT = {
+    "HIGH":   "#44cc44",
+    "MEDIUM": "#ffdd00",
+    "LOW":    "#ff8800",
+    "NONE":   "#44cc44",
 }
 
-RISK_THRESHOLDS = {"CRITICAL": 0.80, "HIGH": 0.60, "MEDIUM": 0.40, "LOW": 0.20}
+CONF_BANDS = {"HIGH": 0.70, "MEDIUM": 0.45}
 
-PRECAUTIONS = {
-    "CRITICAL": [
-        "IMMEDIATE MANEUVER REQUIRED",
-        "Initiate avoidance burn NOW",
-        "Alert mission control",
-        "Log event + switch to safe-mode",
-    ],
-    "HIGH": [
-        "Monitor closely — high-risk zone",
-        "Prepare avoidance maneuver",
-        "Log position + trajectory estimate",
-        "Notify ground station next pass",
-    ],
-    "MEDIUM": [
-        "Track on next image capture",
-        "Log for conjunction analysis",
-        "No immediate action required",
-    ],
-    "LOW": [
-        "Low-confidence detection",
-        "Capture additional images",
-        "No action required",
-    ],
-}
+
+def _migrate_legacy_dir():
+    """Move results saved by older builds out of the misspelt debrie_detect folder."""
+    try:
+        if not os.path.isdir(_LEGACY_DIR):
+            return
+        os.makedirs(DETECT_DIR, exist_ok=True)
+        for name in os.listdir(_LEGACY_DIR):
+            src = os.path.join(_LEGACY_DIR, name)
+            dst = os.path.join(DETECT_DIR, name.replace("_debris.", "_detect."))
+            if os.path.isfile(src) and not os.path.exists(dst):
+                os.replace(src, dst)
+        if not os.listdir(_LEGACY_DIR):
+            os.rmdir(_LEGACY_DIR)
+    except Exception as exc:          # never block the dialog on migration
+        print(f"[ObjectDetect] legacy folder migration skipped: {exc}")
+
+
+_migrate_legacy_dir()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  Pure-logic helpers (no Qt dependency)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _score_risk(conf: float, area_pct: float) -> str:
-    size_bonus = min(area_pct / 10, 0.25)
-    combined   = conf + size_bonus
-    if combined >= RISK_THRESHOLDS["CRITICAL"]: return "CRITICAL"
-    if combined >= RISK_THRESHOLDS["HIGH"]:     return "HIGH"
-    if combined >= RISK_THRESHOLDS["MEDIUM"]:   return "MEDIUM"
+def _confidence_band(conf: float) -> str:
+    if conf >= CONF_BANDS["HIGH"]:   return "HIGH"
+    if conf >= CONF_BANDS["MEDIUM"]: return "MEDIUM"
     return "LOW"
 
 
@@ -119,15 +123,9 @@ def _compute_metrics(box_xyxy, conf, cls_name, img_w, img_h, obj_id) -> dict:
     cy_norm = cy_px / img_h
     diag_px = math.sqrt(bw ** 2 + bh ** 2)
     aspect  = bw / bh if bh > 0 else 0
-    risk    = _score_risk(conf, area_pct)
+    band    = _confidence_band(conf)
 
-    if area_pct >= 5:     proximity = "VERY CLOSE  (<50 km est.)"
-    elif area_pct >= 1:   proximity = "CLOSE       (~50-200 km)"
-    elif area_pct >= 0.3: proximity = "MODERATE    (~200-500 km)"
-    else:                 proximity = "DISTANT     (>500 km est.)"
-
-    fov_deg    = 5.0
-    px_per_deg = img_w / fov_deg
+    px_per_deg = img_w / CAMERA_FOV_DEG
     ang_w_deg  = bw / px_per_deg
     ang_h_deg  = bh / px_per_deg
 
@@ -135,7 +133,7 @@ def _compute_metrics(box_xyxy, conf, cls_name, img_w, img_h, obj_id) -> dict:
         "id":           obj_id,
         "class":        cls_name,
         "confidence":   round(conf, 4),
-        "risk":         risk,
+        "band":         band,
         "bbox_px":      [round(x1), round(y1), round(x2), round(y2)],
         "bbox_norm":    [round(cx_norm, 4), round(cy_norm, 4),
                          round(bw / img_w, 4), round(bh / img_h, 4)],
@@ -148,8 +146,6 @@ def _compute_metrics(box_xyxy, conf, cls_name, img_w, img_h, obj_id) -> dict:
         "aspect_ratio": round(aspect, 3),
         "angular_w_deg":round(ang_w_deg, 4),
         "angular_h_deg":round(ang_h_deg, 4),
-        "proximity":    proximity,
-        "precautions":  PRECAUTIONS[risk],
     }
 
 
@@ -161,9 +157,9 @@ def _annotate_image(img_bgr, detections):
     img_h, img_w = out.shape[:2]
     for d in detections:
         x1, y1, x2, y2 = d["bbox_px"]
-        color = RISK_COLOR_BGR[d["risk"]]
+        color = CONF_COLOR_BGR[d["band"]]
         cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-        label = f"#{d['id']} {d['risk']} {d['confidence']:.2f}"
+        label = f"#{d['id']} {d['class']} {d['confidence']:.2f}"
         (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
         ly = max(y1 - lh - 6, 0)
         cv2.rectangle(out, (x1, ly), (x1 + lw + 4, ly + lh + 6), color, -1)
@@ -177,7 +173,7 @@ def _annotate_image(img_bgr, detections):
     pil_img  = _Image.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB)).convert("RGBA")
     overlay  = _Image.new("RGBA", pil_img.size, (0, 0, 0, 0))
     draw     = _ImageDraw.Draw(overlay)
-    text     = f"APEX  |  Debris Detection  |  {datetime.datetime.now().strftime('%d-%m-%Y - %H:%M:%S')}"
+    text     = f"APEX  |  Object Detection  |  {datetime.datetime.now().strftime('%d-%m-%Y - %H:%M:%S')}"
     font     = None
     for fn in ("consola.ttf", "Consolas.ttf", "arial.ttf", "Arial.ttf"):
         try:
@@ -199,43 +195,44 @@ def _annotate_image(img_bgr, detections):
     return out
 
 
-def _build_txt_report(img_path: str, detections: list, overall: str,
+def _class_counts(detections) -> dict:
+    counts: dict[str, int] = {}
+    for d in detections:
+        counts[d["class"]] = counts.get(d["class"], 0) + 1
+    return dict(sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])))
+
+
+def _build_txt_report(img_path: str, detections: list, summary: str,
                       elapsed_ms: float, conf_thresh: float,
                       img_w: int, img_h: int) -> str:
     """Return a plain-text report string matching the original log style."""
     ts  = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     sep = "=" * 52
     thn = "-" * 52
+    counts = _class_counts(detections)
     lines = [
         sep,
-        "  APEX GCS — DEBRIS DETECTION REPORT",
+        "  APEX GCS — OBJECT DETECTION REPORT",
         sep,
         f"  Timestamp       : {ts}",
         f"  Image           : {Path(img_path).name}",
         f"  Image size      : {img_w} x {img_h} px",
         f"  Inference time  : {elapsed_ms:.1f} ms",
         f"  Conf threshold  : {conf_thresh}",
-        f"  Total debris    : {len(detections)}",
-        f"  Overall risk    : {overall}",
+        f"  Total objects   : {len(detections)}",
+        f"  Distinct classes: {len(counts)}",
         thn,
     ]
 
-    if detections:
-        rs = {lvl: sum(1 for d in detections if d["risk"] == lvl)
-              for lvl in ("CRITICAL", "HIGH", "MEDIUM", "LOW")}
-        lines += [
-            f"  CRITICAL : {rs['CRITICAL']}",
-            f"  HIGH     : {rs['HIGH']}",
-            f"  MEDIUM   : {rs['MEDIUM']}",
-            f"  LOW      : {rs['LOW']}",
-            thn,
-        ]
+    if counts:
+        for name, n in counts.items():
+            lines.append(f"  {name:<16}: {n}")
+        lines.append(thn)
 
     for d in detections:
         lines += [
             f"  OBJECT #{d['id']:02d}  {d['class'].upper()}",
-            f"  Risk            : {d['risk']}",
-            f"  Confidence      : {d['confidence']:.4f}",
+            f"  Confidence      : {d['confidence']:.4f}  ({d['band']})",
             f"  BBox (px)       : [{d['bbox_px'][0]},{d['bbox_px'][1]}] -> [{d['bbox_px'][2]},{d['bbox_px'][3]}]",
             f"  Centroid        : ({d['centroid_px'][0]:.0f}, {d['centroid_px'][1]:.0f}) px",
             f"  Width x Height  : {d['width_px']} x {d['height_px']} px",
@@ -244,16 +241,13 @@ def _build_txt_report(img_path: str, detections: list, overall: str,
             f"  Aspect ratio    : {d['aspect_ratio']:.3f}",
             f"  Norm cx,cy      : {d['bbox_norm'][0]:.4f}, {d['bbox_norm'][1]:.4f}",
             f"  Norm w,h        : {d['bbox_norm'][2]:.4f}, {d['bbox_norm'][3]:.4f}",
-            f"  Angular size    : {d['angular_w_deg']:.4f} deg x {d['angular_h_deg']:.4f} deg",
-            f"  Proximity       : {d['proximity']}",
-            "  Precautions     :",
+            f"  Angular size    : {d['angular_w_deg']:.4f} deg x {d['angular_h_deg']:.4f} deg"
+            f"  (assumes {CAMERA_FOV_DEG:.0f} deg camera FOV)",
+            thn,
         ]
-        for p in d["precautions"]:
-            lines.append(f"    * {p}")
-        lines.append(thn)
 
     if not detections:
-        lines.append("  Clear — no debris detected.")
+        lines.append("  No objects detected.")
         lines.append(sep)
 
     return "\n".join(lines) + "\n"
@@ -264,48 +258,65 @@ def _build_txt_report(img_path: str, detections: list, overall: str,
 # ─────────────────────────────────────────────────────────────────────────────
 
 class _DetectWorker(QtCore.QThread):
-    """Runs YOLO inference off the main thread."""
+    """Runs detection inference off the main thread."""
 
-    finished  = pyqtSignal(object, list, str, float)   # annotated_bgr, detections, overall, ms
+    finished  = pyqtSignal(object, list, str, float)   # annotated_bgr, detections, summary, ms
     errored   = pyqtSignal(str)
 
-    def __init__(self, detector, img_path: str, conf: float):
+    def __init__(self, detector, categories: list, img_path: str, conf: float):
         super().__init__()
-        self.detector = detector
-        self.img_path = img_path
-        self.conf     = conf
+        self.detector   = detector
+        self.categories = categories
+        self.img_path   = img_path
+        self.conf       = conf
 
     def run(self):
         try:
-            import cv2, time
+            import cv2, time, torch
             img_bgr = cv2.imread(self.img_path)
             if img_bgr is None:
-                raise FileNotFoundError(f"Cannot read image: {self.img_path}")
+                raise ValueError(
+                    "Could not decode this image — the downlink was most likely "
+                    "incomplete, leaving a truncated JPEG."
+                )
             H, W = img_bgr.shape[:2]
 
-            t0 = time.time()
-            results = self.detector(self.img_path, conf=self.conf, iou=0.45,
-                                    verbose=False)
-            elapsed = (time.time() - t0) * 1000
+            rgb    = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            tensor = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
+
+            # main.py sets OMP_NUM_THREADS=1 (needed for the torch/Qt OpenMP
+            # workaround), which leaves torch single-threaded and makes this
+            # model take ~9 s. Raising torch's own thread count brings it back
+            # to ~3.5 s with identical results. Capped rather than maxed so the
+            # 50 ms serial telemetry poll on the main thread is not starved.
+            prev_threads = torch.get_num_threads()
+            torch.set_num_threads(max(1, min(6, (os.cpu_count() or 2) // 2)))
+            try:
+                t0 = time.time()
+                with torch.inference_mode():
+                    out = self.detector([tensor])[0]
+                elapsed = (time.time() - t0) * 1000
+            finally:
+                torch.set_num_threads(prev_threads)
 
             detections = []
-            for r in results:
-                for i, box in enumerate(r.boxes):
-                    y1, x1, y2, x2 = box.xyxy[0].tolist()
-                    c  = float(box.conf[0])
-                    ci = int(box.cls[0])
-                    nm = self.detector.names.get(ci, f"class_{ci}")
-                    detections.append(_compute_metrics([x1, y1, x2, y2],
-                                                       c, nm, W, H, i + 1))
+            keep = out["scores"] >= self.conf
+            for box, score, label in zip(out["boxes"][keep],
+                                         out["scores"][keep],
+                                         out["labels"][keep]):
+                x1, y1, x2, y2 = (float(v) for v in box.tolist())
+                ci = int(label)
+                nm = self.categories[ci] if 0 <= ci < len(self.categories) else f"class_{ci}"
+                detections.append(_compute_metrics([x1, y1, x2, y2],
+                                                   float(score), nm, W, H,
+                                                   len(detections) + 1))
 
-            overall = "NONE"
-            for lvl in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
-                if any(d["risk"] == lvl for d in detections):
-                    overall = lvl
-                    break
+            counts  = _class_counts(detections)
+            summary = ", ".join(f"{k} x{v}" if v > 1 else k
+                                for k, v in counts.items()) or "none"
 
             annotated = _annotate_image(img_bgr, detections)
-            self.finished.emit(annotated, detections, overall, elapsed)
+            self.finished.emit(annotated, detections, summary, elapsed)
 
         except Exception as exc:
             self.errored.emit(str(exc))
@@ -315,9 +326,9 @@ class _DetectWorker(QtCore.QThread):
 #  Main dialog
 # ─────────────────────────────────────────────────────────────────────────────
 
-class DebrisDetectionDialog(QtWidgets.QDialog):
+class ObjectDetectionDialog(QtWidgets.QDialog):
     """
-    Pop-up dialog opened from RightPanel's "Start Debris Detection" button.
+    Pop-up dialog opened from RightPanel's "Start Object Detection" button.
     Styled to match the APEX GCS dark theme.
     """
 
@@ -334,7 +345,7 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("APEX GCS — Debris Detection")
+        self.setWindowTitle("APEX GCS — Object Detection")
         self.setMinimumSize(1060, 680)
         self.setModal(True)
         self.setStyleSheet(self._build_stylesheet())
@@ -342,14 +353,16 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
         self._img_path:       str | None = None
         self._annotated_bgr              = None   # numpy array
         self._detections:     list       = []
-        self._overall_risk:   str        = "NONE"
+        self._summary:        str        = "none"
         self._elapsed_ms:     float      = 0.0
-        self._conf_thresh:    float      = 0.25
+        # 0.50 suits Faster R-CNN, which emits many low-scoring boxes; the
+        # old 0.25 default came from YOLO and leaves the frame cluttered.
+        self._conf_thresh:    float      = 0.50
         self._detector                   = None
+        self._categories:     list       = []
         self._worker: _DetectWorker | None = None
 
         self._build_ui()
-        self._load_model_async()
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Stylesheet
@@ -422,13 +435,13 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
         hdr = QtWidgets.QHBoxLayout()
         title_lbl = QtWidgets.QLabel("APEX")
         title_lbl.setStyleSheet(f"color:{self._ORANGE}; font-size:20px; font-weight:bold; font-family:Consolas;")
-        sub_lbl   = QtWidgets.QLabel("  DEBRIS DETECTION")
+        sub_lbl   = QtWidgets.QLabel("  OBJECT DETECTION")
         sub_lbl.setStyleSheet(f"color:{self._FG}; font-size:20px; font-weight:bold; font-family:Consolas;")
         hdr.addWidget(title_lbl)
         hdr.addWidget(sub_lbl)
         hdr.addStretch()
-        self._status_lbl = QtWidgets.QLabel("● LOADING MODEL…")
-        self._status_lbl.setStyleSheet(f"color:#f0c040; font-family:Consolas; font-size:11px;")
+        self._status_lbl = QtWidgets.QLabel("● MODEL NOT LOADED")
+        self._status_lbl.setStyleSheet(f"color:{self._DIM}; font-family:Consolas; font-size:11px;")
         hdr.addWidget(self._status_lbl)
         root.addLayout(hdr)
 
@@ -526,10 +539,10 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
 
         # Stat cards row
         stat_row = QtWidgets.QHBoxLayout()
-        self._card_total = self._make_stat_card("TOTAL",   "—")
-        self._card_risk  = self._make_stat_card("RISK",    "—")
-        self._card_ms    = self._make_stat_card("INF. ms", "—")
-        for c in (self._card_total, self._card_risk, self._card_ms):
+        self._card_total   = self._make_stat_card("OBJECTS", "—")
+        self._card_classes = self._make_stat_card("CLASSES", "—")
+        self._card_ms      = self._make_stat_card("INF. ms", "—")
+        for c in (self._card_total, self._card_classes, self._card_ms):
             stat_row.addWidget(c, 1)
         right_layout.addLayout(stat_row)
 
@@ -606,32 +619,57 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
     #  Model loading
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _load_model_async(self):
+    def _ensure_model(self) -> bool:
+        """
+        Load the detector on the MAIN thread, on first use.
+
+        Importing torch/torchvision and building the network inside a QThread
+        caused an intermittent native crash on Windows (exit 127,
+        ERROR_PROC_NOT_FOUND, no Python traceback) — the same class of
+        torch/Qt DLL conflict that main.py's c10.dll pre-load works around.
+        Inference itself is threaded in _DetectWorker, which is the
+        arrangement the shipped build already proved stable.
+        """
+        if self._detector is not None:
+            return True
         try:
-            from ultralytics import YOLO
-            mp = Path(MODEL_PATH)
-            if not mp.exists():
-                self._on_model_load_fail(f"Model not found: {mp}")
-                return
-            self._detector = YOLO(str(mp))
-            self._on_model_ready(mp.name)
-        except Exception as e:
+            import torch
+            from torchvision.models.detection import (
+                fasterrcnn_resnet50_fpn_v2,
+                FasterRCNN_ResNet50_FPN_V2_Weights,
+            )
+            if not Path(MODEL_PATH).exists():
+                self._on_model_load_fail(f"Model not found: {MODEL_PATH}")
+                return False
+
+            self._set_status("● LOADING MODEL…", "#f0c040")
+            self._progress.setVisible(True)
+            QtWidgets.QApplication.processEvents()      # let the UI paint first
+
+            # Category metadata lives in torchvision itself, so this needs no network.
+            categories = list(FasterRCNN_ResNet50_FPN_V2_Weights.COCO_V1.meta["categories"])
+            model = fasterrcnn_resnet50_fpn_v2(
+                weights=None, weights_backbone=None, num_classes=len(categories)
+            )
+            model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
+            model.eval()
+
+            self._detector   = model
+            self._categories = categories
+            usable = len([c for c in categories if c not in ("N/A", "__background__")])
+            self._set_status("● READY  [Faster R-CNN R50-FPN v2 (COCO)]", "#44cc44")
+            self._bottom_lbl.setText(f"Model ready — {usable} detectable classes")
+            return True
+        except Exception as exc:
             import traceback
             traceback.print_exc()
-            self._on_model_load_fail(str(e))
+            self._on_model_load_fail(str(exc))
+            return False
+        finally:
+            self._progress.setVisible(False)
 
-    def _load_main_thread(self):
-        pass
-
-    @QtCore.pyqtSlot(str)
-    def _on_model_ready(self, name: str):
-        self._set_status(f"● READY  [{name}]", "#44cc44")
-        self._btn_test.setEnabled(True)
-
-    @QtCore.pyqtSlot(str)
     def _on_model_load_fail(self, msg: str):
-        self._set_status(f"● MODEL ERROR", "#ff4444")
-        self._btn_test.setEnabled(False)
+        self._set_status("● MODEL ERROR", "#ff4444")
         self._bottom_lbl.setText(f"Model error: {msg}")
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -677,7 +715,7 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
         self._img_path       = path
         self._annotated_bgr  = None
         self._detections     = []
-        self._overall_risk   = "NONE"
+        self._summary        = "none"
         self._log_clear()
         self._show_image_from_path(path)
         self._img_name_lbl.setText(Path(path).name)
@@ -689,10 +727,16 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
             import cv2
             bgr = cv2.imread(path)
             if bgr is None:
-                raise ValueError("Cannot read image")
+                raise ValueError(
+                    "Could not decode this image — the downlink was most likely "
+                    "incomplete, leaving a truncated JPEG."
+                )
             self._show_bgr(bgr)
         except Exception as e:
-            self._img_label.setText(f"<span style='color:#ff4444;'>Error: {e}</span>")
+            self._img_label.setPixmap(QPixmap())
+            self._img_label.setText(
+                f"<span style='color:#ff4444; font-family:Consolas; font-size:12px;'>{e}</span>"
+            )
 
     def _show_bgr(self, bgr):
         """Convert OpenCV BGR image to QPixmap and display it, scaled to fit."""
@@ -729,7 +773,7 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
         if self._detector is None:
             QtWidgets.QMessageBox.warning(
                 self, "Model Not Ready",
-                "The YOLO model is still loading or failed to load.\n"
+                "The detection model is still loading or failed to load.\n"
                 f"Expected path: {MODEL_PATH}"
             )
             return
@@ -737,22 +781,23 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
         self._btn_test.setEnabled(False)
         self._progress.setVisible(True)
         self._conf_thresh = self._conf_spin.value()
-        self._bottom_lbl.setText("Running inference…")
+        self._bottom_lbl.setText("Running inference… (a few seconds on CPU)")
 
-        self._worker = _DetectWorker(self._detector, self._img_path, self._conf_thresh)
+        self._worker = _DetectWorker(self._detector, self._categories,
+                                     self._img_path, self._conf_thresh)
         self._worker.finished.connect(self._on_detect_finished)
         self._worker.errored.connect(self._on_detect_error)
         self._worker.start()
 
     @QtCore.pyqtSlot(object, list, str, float)
-    def _on_detect_finished(self, annotated_bgr, detections, overall, elapsed_ms):
+    def _on_detect_finished(self, annotated_bgr, detections, summary, elapsed_ms):
         self._annotated_bgr  = annotated_bgr
         self._detections     = detections
-        self._overall_risk   = overall
+        self._summary        = summary
         self._elapsed_ms     = elapsed_ms
 
         self._show_bgr(annotated_bgr)
-        self._update_report(detections, overall, elapsed_ms)
+        self._update_report(detections, summary, elapsed_ms)
         self._progress.setVisible(False)
         self._btn_test.setEnabled(True)
         self._bottom_lbl.setText(
@@ -770,11 +815,11 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
     #  Report panel
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _update_report(self, detections, overall, elapsed_ms):
-        risk_color = RISK_COLOR_QT.get(overall, self._FG)
-        self._set_card(self._card_total, str(len(detections)))
-        self._set_card(self._card_risk,  overall, risk_color)
-        self._set_card(self._card_ms,    f"{elapsed_ms:.0f}")
+    def _update_report(self, detections, summary, elapsed_ms):
+        counts = _class_counts(detections)
+        self._set_card(self._card_total,   str(len(detections)))
+        self._set_card(self._card_classes, str(len(counts)))
+        self._set_card(self._card_ms,      f"{elapsed_ms:.0f}")
 
         self._log_clear()
         self._log_line("header",  "=" * 44 + "\n")
@@ -783,30 +828,29 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
         self._log_pair("Time",      datetime.datetime.utcnow().strftime("%H:%M:%S UTC"))
         self._log_pair("Image",     Path(self._img_path).name)
         self._log_pair("Inference", f"{elapsed_ms:.1f} ms")
-        self._log_pair("Debris",    str(len(detections)))
-        tag = overall.lower() if overall in RISK_COLOR_QT else "none"
-        self._log_html(f"<span style='color:{risk_color};'>  Overall   : {overall}</span><br>")
+        self._log_pair("Objects",   str(len(detections)))
+        self._log_pair("Classes",   str(len(counts)))
 
-        if detections:
-            rs = {lvl: sum(1 for d in detections if d["risk"] == lvl)
-                  for lvl in ("CRITICAL", "HIGH", "MEDIUM", "LOW")}
+        if counts:
             self._log_line("dim", "─" * 44 + "\n")
-            for lvl in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
-                c = RISK_COLOR_QT[lvl]
+            for name, n in counts.items():
                 self._log_html(
-                    f"<span style='color:{c};'>  {lvl:<10}: {rs[lvl]}</span><br>"
+                    f"<span style='color:{self._DIM};'>  {name:<16}: </span>"
+                    f"<span style='color:#7ecfff;'>{n}</span><br>"
                 )
 
         for d in detections:
-            rc = RISK_COLOR_QT.get(d["risk"], self._FG)
+            bc = CONF_COLOR_QT.get(d["band"], self._FG)
             self._log_line("dim", "─" * 44 + "\n")
             self._log_html(
                 f"<span style='color:{self._ORANGE}; font-weight:bold;'>"
                 f"  OBJECT #{d['id']:02d}  {d['class'].upper()}</span><br>"
             )
-            self._log_html(f"<span style='color:{rc};'>  Risk       : {d['risk']}</span><br>")
+            self._log_html(
+                f"<span style='color:{self._DIM};'>  Confidence    : </span>"
+                f"<span style='color:{bc};'>{d['confidence']:.4f}  ({d['band']})</span><br>"
+            )
             pairs = [
-                ("Confidence",   f"{d['confidence']:.4f}"),
                 ("BBox (px)",    f"[{d['bbox_px'][0]},{d['bbox_px'][1]}]->[{d['bbox_px'][2]},{d['bbox_px'][3]}]"),
                 ("Centroid",     f"({d['centroid_px'][0]:.0f}, {d['centroid_px'][1]:.0f}) px"),
                 ("Width x H",    f"{d['width_px']} x {d['height_px']} px"),
@@ -816,20 +860,19 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
                 ("Norm cx,cy",   f"{d['bbox_norm'][0]:.4f}, {d['bbox_norm'][1]:.4f}"),
                 ("Norm w,h",     f"{d['bbox_norm'][2]:.4f}, {d['bbox_norm'][3]:.4f}"),
                 ("Angular",      f"{d['angular_w_deg']:.4f} x {d['angular_h_deg']:.4f} deg"),
-                ("Proximity",    d["proximity"]),
             ]
             for lbl, val in pairs:
                 self._log_html(
                     f"<span style='color:{self._DIM};'>  {lbl:<14}: </span>"
                     f"<span style='color:#7ecfff;'>{val}</span><br>"
                 )
-            self._log_html(f"<span style='color:{self._DIM};'>  Precautions:</span><br>")
-            for p in d["precautions"]:
-                self._log_html(f"<span style='color:{rc};'>    * {p}</span><br>")
 
         self._log_line("dim", "=" * 44 + "\n")
         if not detections:
-            self._log_html(f"<span style='color:#44cc44;'>  Clear — no debris detected.</span><br>")
+            self._log_html(
+                f"<span style='color:{self._DIM};'>  No objects detected above the "
+                f"confidence threshold.</span><br>"
+            )
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Save
@@ -844,24 +887,23 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
             return
 
         import cv2
-        os.makedirs(DEBRIS_DIR, exist_ok=True)
+        os.makedirs(DETECT_DIR, exist_ok=True)
 
         # Build stem from source image name (preserves IMG_ naming)
         src_stem = Path(self._img_path).stem
-        stem     = f"{src_stem}_debris"
+        stem     = f"{src_stem}_detect"
 
-        img_path = os.path.join(DEBRIS_DIR, f"{stem}.jpg")
-        txt_path = os.path.join(DEBRIS_DIR, f"{stem}.txt")
+        img_path = os.path.join(DETECT_DIR, f"{stem}.jpg")
+        txt_path = os.path.join(DETECT_DIR, f"{stem}.txt")
 
         # Save annotated image
         cv2.imwrite(img_path, self._annotated_bgr)
 
         # Save plain-text report (same stem)
-        import cv2 as _cv2
-        img_bgr = _cv2.imread(self._img_path)
+        img_bgr = cv2.imread(self._img_path)
         H, W = img_bgr.shape[:2] if img_bgr is not None else (0, 0)
         report_txt = _build_txt_report(
-            self._img_path, self._detections, self._overall_risk,
+            self._img_path, self._detections, self._summary,
             self._elapsed_ms, self._conf_thresh, W, H,
         )
         with open(txt_path, "w", encoding="utf-8") as f:
@@ -870,11 +912,11 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
         try:
             import widgets.auth_backend as auth
             import threading as _t
-            if hasattr(self, "_user_email") and self._user_email:
-                _t.Thread(target=auth.upload_file, args=(self._user_email, img_path, "debris detection"), daemon=True).start()
-                _t.Thread(target=auth.upload_file, args=(self._user_email, txt_path, "debris detection"), daemon=True).start()
+            if getattr(self, "_user_email", ""):
+                _t.Thread(target=auth.upload_file, args=(self._user_email, img_path, "object detection"), daemon=True).start()
+                _t.Thread(target=auth.upload_file, args=(self._user_email, txt_path, "object detection"), daemon=True).start()
         except Exception as _ue:
-            print(f"[Drive] debris upload error: {_ue}")
+            print(f"[Drive] object detection upload error: {_ue}")
 
         self._bottom_lbl.setText(f"Saved → {img_path}")
         msg = QtWidgets.QMessageBox(self)
@@ -898,7 +940,7 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
         self._img_path      = None
         self._annotated_bgr = None
         self._detections    = []
-        self._overall_risk  = "NONE"
+        self._summary       = "none"
         self._elapsed_ms    = 0.0
         self._img_label.setPixmap(QPixmap())
         self._img_label.setText(
@@ -907,9 +949,9 @@ class DebrisDetectionDialog(QtWidgets.QDialog):
             "</span>"
         )
         self._img_name_lbl.setText("")
-        self._set_card(self._card_total, "—")
-        self._set_card(self._card_risk,  "—", self._FG)
-        self._set_card(self._card_ms,    "—")
+        self._set_card(self._card_total,   "—")
+        self._set_card(self._card_classes, "—", self._FG)
+        self._set_card(self._card_ms,      "—")
         self._log_clear()
         self._bottom_lbl.setText("")
 

@@ -24,7 +24,7 @@ from OpenGL.GLU import *
 
 from config import DEFAULT_LAT, DEFAULT_LON
 from widgets.dialogs import ThemedMessageBox
-from widgets.debris_detection import DebrisDetectionDialog
+from widgets.object_detection import ObjectDetectionDialog
 
 if getattr(sys, 'frozen', False):
     BASE_PATH = sys._MEIPASS
@@ -212,7 +212,7 @@ class RightPanel(QtWidgets.QFrame):
             ("📸 Capture Image",          "C\n",  "Command CubeSat camera to capture a new image.",      False),
             ("📤 Transmit Image",          "S\n",  "Transmit stored payload image to ground station.",    False),
             ("📤 Transmit CW Signal",      "B\n",  "Transmit Morse CW beacon signal.",                    False),
-            ("📤 Start Debris Detection",  "",     "Activate debris detection system.",                   False),
+            ("📤 Start Object Detection",  "",     "Run object detection on a downlinked image.",          False),
             ("🛜 Send Telemetry",          "T\n",  "Request current telemetry packet.",                   False),
             ("🔄 Restart System",          "R\n",  "Reboot onboard computer.",                            True),
             ("🔌 Reconnect Serial",         "A\n",  "Disconnect and reconnect the serial port.",            False),
@@ -223,8 +223,8 @@ class RightPanel(QtWidgets.QFrame):
             btn.setToolTip(tip)
             btn.setToolTipDuration(2000)
 
-            if text == "📤 Start Debris Detection":
-                btn.clicked.connect(self._open_debris_detection)
+            if text == "📤 Start Object Detection":
+                btn.clicked.connect(self._open_object_detection)
             elif command:
                 if confirm:
                     btn.clicked.connect(
@@ -282,8 +282,8 @@ class RightPanel(QtWidgets.QFrame):
         webbrowser.open(url)
 
     # ── internal ──────────────────────────────────────────────────────────────
-    def _open_debris_detection(self):
-        dlg = DebrisDetectionDialog(parent=self)
+    def _open_object_detection(self):
+        dlg = ObjectDetectionDialog(parent=self)
         user_email = getattr(self.parent(), "user_email", "") or \
                      getattr(self.parent().parent() if self.parent() else None, "user_email", "") or ""
         dlg._user_email = user_email

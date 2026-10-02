@@ -21,7 +21,7 @@ os.environ["PYTORCH_JIT"] = "0"
 try:
     import torch
     import torch.nn
-    from ultralytics import YOLO
+    import torchvision
 except Exception as _e:
     print("[WARN] torch pre-load failed:", _e)
 

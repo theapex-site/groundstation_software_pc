@@ -147,7 +147,7 @@ def create_user_drive_folder(email: str):
         svc         = _get_drive()
         user_folder = _get_or_create_folder(svc, email, DRIVE_ROOT_FOLDER_ID)
         _get_or_create_folder(svc, "received images",  user_folder)
-        _get_or_create_folder(svc, "debris detection", user_folder)
+        _get_or_create_folder(svc, "object detection", user_folder)
         _get_or_create_folder(svc, "files",            user_folder)
         _share_folder(svc, user_folder, email)
         return user_folder
@@ -160,7 +160,7 @@ def get_user_drive_url(email: str):
         svc = _get_drive()
         fid = _get_or_create_folder(svc, email, DRIVE_ROOT_FOLDER_ID)
         _get_or_create_folder(svc, "received images",  fid)
-        _get_or_create_folder(svc, "debris detection", fid)
+        _get_or_create_folder(svc, "object detection", fid)
         _get_or_create_folder(svc, "files",            fid)
         _share_folder(svc, fid, email)
         return f"https://drive.google.com/drive/folders/{fid}"
@@ -284,7 +284,7 @@ def _send_welcome_email(name: str, email: str):
 
           <p style="color:#b0bec5;font-size:15px;line-height:1.8;margin:0 0 28px;">
             Your personal backup folder is live on Google Drive.
-            Everything you capture — satellite images, debris detection results,
+            Everything you capture — satellite images, object detection results,
             and mission files — will be automatically saved there in real time.
           </p>
 
@@ -297,7 +297,7 @@ def _send_welcome_email(name: str, email: str):
                          line-height:2.2;">
                 &#128193; Your Backup Folder/<br>
                 &nbsp;&nbsp;&nbsp;&nbsp;&#128247; received images/<br>
-                &nbsp;&nbsp;&nbsp;&nbsp;&#128269; debris detection/<br>
+                &nbsp;&nbsp;&nbsp;&nbsp;&#128269; object detection/<br>
                 &nbsp;&nbsp;&nbsp;&nbsp;&#128196; files/
               </td>
             </tr>
