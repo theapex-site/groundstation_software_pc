@@ -36,7 +36,6 @@ Save structure:
 from __future__ import annotations
 
 import datetime
-import math
 import os
 import sys
 from pathlib import Path
@@ -57,10 +56,6 @@ os.environ["OMP_NUM_THREADS"] = "1"
 CAMERA_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "camera")
 DETECT_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "object_detect")
 _LEGACY_DIR  = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "debrie_detect")
-
-# Horizontal field of view of the CubeSat camera (OV2640 on the ESP32-CAM is
-# ~65°). Used only to express bounding-box size as an angular measurement.
-CAMERA_FOV_DEG = 65.0
 
 # ── Confidence palette (matches GCS stylesheet accent colours) ───────────────
 # Replaces the old debris risk grading: with a generic COCO model there is no
@@ -111,41 +106,64 @@ def _confidence_band(conf: float) -> str:
     return "LOW"
 
 
-def _compute_metrics(box_xyxy, conf, cls_name, img_w, img_h, obj_id) -> dict:
-    x1, y1, x2, y2 = box_xyxy
-    bw      = x2 - x1
-    bh      = y2 - y1
-    area_px = bw * bh
-    area_pct= area_px / (img_w * img_h) * 100
-    cx_px   = (x1 + x2) / 2
-    cy_px   = (y1 + y2) / 2
-    cx_norm = cx_px / img_w
-    cy_norm = cy_px / img_h
-    diag_px = math.sqrt(bw ** 2 + bh ** 2)
-    aspect  = bw / bh if bh > 0 else 0
-    band    = _confidence_band(conf)
+def _dead_mask(img_bgr):
+    """
+    Boolean mask of pixels lost to an incomplete downlink.
 
-    px_per_deg = img_w / CAMERA_FOV_DEG
-    ang_w_deg  = bw / px_per_deg
-    ang_h_deg  = bh / px_per_deg
+    The camera buffer is pre-filled with mid-grey, so packets that never
+    arrived decode as flat BGR(128,128,128). Measured on real captures:
+    IMG_20260625_140414 and IMG_20260626_020822 are each ~43% dead.
+
+    A row is only treated as dropped when almost all of it is that fill
+    value, so a genuinely grey object in a fully received row is not
+    mistaken for missing data.
+    """
+    import numpy as np
+    near     = np.all(np.abs(img_bgr.astype(np.int16) - 128) <= 2, axis=2)
+    row_dead = near.mean(axis=1) > 0.95
+    return near & row_dead[:, None]
+
+
+def _received_pct(dead_mask) -> float:
+    """Percentage of the frame that actually arrived."""
+    return float((1.0 - dead_mask.mean()) * 100.0)
+
+
+def _compute_metrics(box_xyxy, conf, cls_name, img_w, img_h, obj_id,
+                     dead_mask=None) -> dict:
+    x1, y1, x2, y2 = box_xyxy
+    bw       = x2 - x1
+    bh       = y2 - y1
+    area_pct = (bw * bh) / (img_w * img_h) * 100
+    cx_norm  = ((x1 + x2) / 2) / img_w
+    cy_norm  = ((y1 + y2) / 2) / img_h
+    band     = _confidence_band(conf)
+
+    # How much of this box sits on packets that never arrived. A detection
+    # mostly inside the dead region is the model hallucinating on flat grey.
+    dead_pct = 0.0
+    if dead_mask is not None:
+        cx1, cy1 = max(0, int(x1)), max(0, int(y1))
+        cx2, cy2 = min(img_w, int(x2)), min(img_h, int(y2))
+        if cx2 > cx1 and cy2 > cy1:
+            dead_pct = float(dead_mask[cy1:cy2, cx1:cx2].mean() * 100.0)
+
+    # Box touching a frame edge means the object is cut off, so its size
+    # is a lower bound rather than a measurement.
+    clipped = bool(x1 <= 1 or y1 <= 1 or x2 >= img_w - 1 or y2 >= img_h - 1)
 
     return {
-        "id":           obj_id,
-        "class":        cls_name,
-        "confidence":   round(conf, 4),
-        "band":         band,
-        "bbox_px":      [round(x1), round(y1), round(x2), round(y2)],
-        "bbox_norm":    [round(cx_norm, 4), round(cy_norm, 4),
-                         round(bw / img_w, 4), round(bh / img_h, 4)],
-        "centroid_px":  [round(cx_px, 1), round(cy_px, 1)],
-        "width_px":     round(bw, 1),
-        "height_px":    round(bh, 1),
-        "area_px":      round(area_px),
-        "area_pct":     round(area_pct, 4),
-        "diag_px":      round(diag_px, 1),
-        "aspect_ratio": round(aspect, 3),
-        "angular_w_deg":round(ang_w_deg, 4),
-        "angular_h_deg":round(ang_h_deg, 4),
+        "id":         obj_id,
+        "class":      cls_name,
+        "confidence": round(conf, 4),
+        "band":       band,
+        "bbox_px":    [round(x1), round(y1), round(x2), round(y2)],
+        "width_px":   round(bw, 1),
+        "height_px":  round(bh, 1),
+        "area_pct":   round(area_pct, 2),
+        "centre":     [round(cx_norm, 4), round(cy_norm, 4)],
+        "dead_pct":   round(dead_pct, 1),
+        "clipped":    clipped,
     }
 
 
@@ -166,8 +184,7 @@ def _annotate_image(img_bgr, detections):
         cv2.putText(out, label, (x1 + 2, ly + lh + 2),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1,
                     cv2.LINE_AA)
-        cx, cy = d["centroid_px"]
-        cv2.circle(out, (int(cx), int(cy)), 4, color, -1)
+        cv2.circle(out, ((x1 + x2) // 2, (y1 + y2) // 2), 4, color, -1)
     # Watermark — exact same style as CubeSat camera images (PIL overlay)
     from PIL import Image as _Image, ImageDraw as _ImageDraw, ImageFont as _ImageFont
     pil_img  = _Image.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB)).convert("RGBA")
@@ -204,7 +221,7 @@ def _class_counts(detections) -> dict:
 
 def _build_txt_report(img_path: str, detections: list, summary: str,
                       elapsed_ms: float, conf_thresh: float,
-                      img_w: int, img_h: int) -> str:
+                      img_w: int, img_h: int, received_pct: float = 100.0) -> str:
     """Return a plain-text report string matching the original log style."""
     ts  = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
     sep = "=" * 52
@@ -217,12 +234,20 @@ def _build_txt_report(img_path: str, detections: list, summary: str,
         f"  Timestamp       : {ts}",
         f"  Image           : {Path(img_path).name}",
         f"  Image size      : {img_w} x {img_h} px",
+        f"  Frame received  : {received_pct:.1f}%",
         f"  Inference time  : {elapsed_ms:.1f} ms",
         f"  Conf threshold  : {conf_thresh}",
         f"  Total objects   : {len(detections)}",
         f"  Distinct classes: {len(counts)}",
         thn,
     ]
+
+    if received_pct < 99.5:
+        lines += [
+            f"  NOTE: {100 - received_pct:.1f}% of this frame was lost in the downlink.",
+            "        Detections overlapping the lost region are unreliable.",
+            thn,
+        ]
 
     if counts:
         for name, n in counts.items():
@@ -234,15 +259,11 @@ def _build_txt_report(img_path: str, detections: list, summary: str,
             f"  OBJECT #{d['id']:02d}  {d['class'].upper()}",
             f"  Confidence      : {d['confidence']:.4f}  ({d['band']})",
             f"  BBox (px)       : [{d['bbox_px'][0]},{d['bbox_px'][1]}] -> [{d['bbox_px'][2]},{d['bbox_px'][3]}]",
-            f"  Centroid        : ({d['centroid_px'][0]:.0f}, {d['centroid_px'][1]:.0f}) px",
-            f"  Width x Height  : {d['width_px']} x {d['height_px']} px",
-            f"  Area            : {d['area_pct']:.4f}%  ({d['area_px']:,} px2)",
-            f"  Diagonal        : {d['diag_px']} px",
-            f"  Aspect ratio    : {d['aspect_ratio']:.3f}",
-            f"  Norm cx,cy      : {d['bbox_norm'][0]:.4f}, {d['bbox_norm'][1]:.4f}",
-            f"  Norm w,h        : {d['bbox_norm'][2]:.4f}, {d['bbox_norm'][3]:.4f}",
-            f"  Angular size    : {d['angular_w_deg']:.4f} deg x {d['angular_h_deg']:.4f} deg"
-            f"  (assumes {CAMERA_FOV_DEG:.0f} deg camera FOV)",
+            f"  Size            : {d['width_px']:.0f} x {d['height_px']:.0f} px  ({d['area_pct']:.2f}% of frame)",
+            f"  Centre          : {d['centre'][0]:.4f}, {d['centre'][1]:.4f}  (normalised)",
+            f"  In lost region  : {d['dead_pct']:.1f}%"
+            + ("   <-- unreliable" if d["dead_pct"] >= 50 else ""),
+            f"  Clipped at edge : {'yes  (size is a lower bound)' if d['clipped'] else 'no'}",
             thn,
         ]
 
@@ -260,7 +281,7 @@ def _build_txt_report(img_path: str, detections: list, summary: str,
 class _DetectWorker(QtCore.QThread):
     """Runs detection inference off the main thread."""
 
-    finished  = pyqtSignal(object, list, str, float)   # annotated_bgr, detections, summary, ms
+    finished  = pyqtSignal(object, list, str, float, float)   # annotated, detections, summary, ms, received%
     errored   = pyqtSignal(str)
 
     def __init__(self, detector, categories: list, img_path: str, conf: float):
@@ -299,6 +320,9 @@ class _DetectWorker(QtCore.QThread):
             finally:
                 torch.set_num_threads(prev_threads)
 
+            dead = _dead_mask(img_bgr)
+            received = _received_pct(dead)
+
             detections = []
             keep = out["scores"] >= self.conf
             for box, score, label in zip(out["boxes"][keep],
@@ -309,14 +333,14 @@ class _DetectWorker(QtCore.QThread):
                 nm = self.categories[ci] if 0 <= ci < len(self.categories) else f"class_{ci}"
                 detections.append(_compute_metrics([x1, y1, x2, y2],
                                                    float(score), nm, W, H,
-                                                   len(detections) + 1))
+                                                   len(detections) + 1, dead))
 
             counts  = _class_counts(detections)
             summary = ", ".join(f"{k} x{v}" if v > 1 else k
                                 for k, v in counts.items()) or "none"
 
             annotated = _annotate_image(img_bgr, detections)
-            self.finished.emit(annotated, detections, summary, elapsed)
+            self.finished.emit(annotated, detections, summary, elapsed, received)
 
         except Exception as exc:
             self.errored.emit(str(exc))
@@ -354,6 +378,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._annotated_bgr              = None   # numpy array
         self._detections:     list       = []
         self._summary:        str        = "none"
+        self._received_pct:   float      = 100.0
         self._elapsed_ms:     float      = 0.0
         # 0.50 suits Faster R-CNN, which emits many low-scoring boxes; the
         # old 0.25 default came from YOLO and leaves the frame cluttered.
@@ -542,7 +567,8 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._card_total   = self._make_stat_card("OBJECTS", "—")
         self._card_classes = self._make_stat_card("CLASSES", "—")
         self._card_ms      = self._make_stat_card("INF. ms", "—")
-        for c in (self._card_total, self._card_classes, self._card_ms):
+        self._card_rx      = self._make_stat_card("FRAME RX", "—")
+        for c in (self._card_total, self._card_classes, self._card_ms, self._card_rx):
             stat_row.addWidget(c, 1)
         right_layout.addLayout(stat_row)
 
@@ -789,15 +815,17 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._worker.errored.connect(self._on_detect_error)
         self._worker.start()
 
-    @QtCore.pyqtSlot(object, list, str, float)
-    def _on_detect_finished(self, annotated_bgr, detections, summary, elapsed_ms):
+    @QtCore.pyqtSlot(object, list, str, float, float)
+    def _on_detect_finished(self, annotated_bgr, detections, summary, elapsed_ms,
+                            received_pct=100.0):
         self._annotated_bgr  = annotated_bgr
         self._detections     = detections
         self._summary        = summary
         self._elapsed_ms     = elapsed_ms
+        self._received_pct   = received_pct
 
         self._show_bgr(annotated_bgr)
-        self._update_report(detections, summary, elapsed_ms)
+        self._update_report(detections, summary, elapsed_ms, received_pct)
         self._progress.setVisible(False)
         self._btn_test.setEnabled(True)
         self._bottom_lbl.setText(
@@ -815,11 +843,14 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     #  Report panel
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _update_report(self, detections, summary, elapsed_ms):
+    def _update_report(self, detections, summary, elapsed_ms, received_pct=100.0):
         counts = _class_counts(detections)
         self._set_card(self._card_total,   str(len(detections)))
         self._set_card(self._card_classes, str(len(counts)))
         self._set_card(self._card_ms,      f"{elapsed_ms:.0f}")
+        rx_col = ("#44cc44" if received_pct >= 99.5 else
+                  "#ffdd00" if received_pct >= 75 else "#ff8800")
+        self._set_card(self._card_rx, f"{received_pct:.0f}%", rx_col)
 
         self._log_clear()
         self._log_line("header",  "=" * 44 + "\n")
@@ -830,6 +861,15 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._log_pair("Inference", f"{elapsed_ms:.1f} ms")
         self._log_pair("Objects",   str(len(detections)))
         self._log_pair("Classes",   str(len(counts)))
+        self._log_html(
+            f"<span style='color:{self._DIM};'>  Frame RX  : </span>"
+            f"<span style='color:{rx_col};'>{received_pct:.1f}%</span><br>"
+        )
+        if received_pct < 99.5:
+            self._log_html(
+                f"<span style='color:#ff8800;'>  {100 - received_pct:.1f}% of this frame "
+                f"was lost in the downlink.</span><br>"
+            )
 
         if counts:
             self._log_line("dim", "─" * 44 + "\n")
@@ -851,20 +891,25 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
                 f"<span style='color:{bc};'>{d['confidence']:.4f}  ({d['band']})</span><br>"
             )
             pairs = [
-                ("BBox (px)",    f"[{d['bbox_px'][0]},{d['bbox_px'][1]}]->[{d['bbox_px'][2]},{d['bbox_px'][3]}]"),
-                ("Centroid",     f"({d['centroid_px'][0]:.0f}, {d['centroid_px'][1]:.0f}) px"),
-                ("Width x H",    f"{d['width_px']} x {d['height_px']} px"),
-                ("Area",         f"{d['area_pct']:.4f}%  ({d['area_px']:,} px2)"),
-                ("Diagonal",     f"{d['diag_px']} px"),
-                ("Aspect ratio", f"{d['aspect_ratio']:.3f}"),
-                ("Norm cx,cy",   f"{d['bbox_norm'][0]:.4f}, {d['bbox_norm'][1]:.4f}"),
-                ("Norm w,h",     f"{d['bbox_norm'][2]:.4f}, {d['bbox_norm'][3]:.4f}"),
-                ("Angular",      f"{d['angular_w_deg']:.4f} x {d['angular_h_deg']:.4f} deg"),
+                ("BBox (px)",  f"[{d['bbox_px'][0]},{d['bbox_px'][1]}]->[{d['bbox_px'][2]},{d['bbox_px'][3]}]"),
+                ("Size",       f"{d['width_px']:.0f} x {d['height_px']:.0f} px ({d['area_pct']:.2f}%)"),
+                ("Centre",     f"{d['centre'][0]:.4f}, {d['centre'][1]:.4f}"),
             ]
             for lbl, val in pairs:
                 self._log_html(
-                    f"<span style='color:{self._DIM};'>  {lbl:<14}: </span>"
+                    f"<span style='color:{self._DIM};'>  {lbl:<12}: </span>"
                     f"<span style='color:#7ecfff;'>{val}</span><br>"
+                )
+            dead_col = "#ff8800" if d["dead_pct"] >= 50 else "#7ecfff"
+            self._log_html(
+                f"<span style='color:{self._DIM};'>  In lost rgn : </span>"
+                f"<span style='color:{dead_col};'>{d['dead_pct']:.1f}%"
+                f"{'  &lt;-- unreliable' if d['dead_pct'] >= 50 else ''}</span><br>"
+            )
+            if d["clipped"]:
+                self._log_html(
+                    f"<span style='color:{self._DIM};'>  Clipped     : </span>"
+                    f"<span style='color:#ffdd00;'>yes (size is a lower bound)</span><br>"
                 )
 
         self._log_line("dim", "=" * 44 + "\n")
@@ -904,7 +949,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         H, W = img_bgr.shape[:2] if img_bgr is not None else (0, 0)
         report_txt = _build_txt_report(
             self._img_path, self._detections, self._summary,
-            self._elapsed_ms, self._conf_thresh, W, H,
+            self._elapsed_ms, self._conf_thresh, W, H, self._received_pct,
         )
         with open(txt_path, "w", encoding="utf-8") as f:
             f.write(report_txt)
@@ -952,6 +997,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._set_card(self._card_total,   "—")
         self._set_card(self._card_classes, "—", self._FG)
         self._set_card(self._card_ms,      "—")
+        self._set_card(self._card_rx,      "—", self._FG)
         self._log_clear()
         self._bottom_lbl.setText("")
 
