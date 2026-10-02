@@ -57,15 +57,10 @@ CAMERA_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "camera")
 DETECT_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "object_detect")
 _LEGACY_DIR  = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "debrie_detect")
 
-# ── Confidence palette (matches GCS stylesheet accent colours) ───────────────
+# ── Confidence palette ──────────────────────────────────────────────────────
 # Replaces the old debris risk grading: with a generic COCO model there is no
 # collision risk to score, so detections are banded by detector confidence.
-CONF_COLOR_BGR = {
-    "HIGH":   (50, 200,  50),
-    "MEDIUM": (0,  200, 255),
-    "LOW":    (0,  120, 255),
-    "NONE":   (80, 200,  80),
-}
+# This colours the confidence TEXT only — box colour identifies the object.
 CONF_COLOR_QT = {
     "HIGH":   "#44cc44",
     "MEDIUM": "#ffdd00",
@@ -74,6 +69,38 @@ CONF_COLOR_QT = {
 }
 
 CONF_BANDS = {"HIGH": 0.70, "MEDIUM": 0.45}
+
+# Per-object palette. Colour identifies WHICH object a box is, so a box in the
+# image can be matched to its entry in the report; the confidence band is
+# carried by the text instead. Eight hues that stay distinguishable against
+# photographic backgrounds, cycled when there are more detections than that.
+OBJECT_COLORS = [
+    "#38bdf8",  # sky
+    "#f97316",  # orange
+    "#22c55e",  # green
+    "#e879f9",  # fuchsia
+    "#facc15",  # yellow
+    "#f43f5e",  # rose
+    "#2dd4bf",  # teal
+    "#a78bfa",  # violet
+]
+
+
+def _object_color(obj_id: int) -> str:
+    """Hex colour for an object, by its 1-based id."""
+    return OBJECT_COLORS[(obj_id - 1) % len(OBJECT_COLORS)]
+
+
+def _hex_to_bgr(hex_color: str) -> tuple:
+    """#rrggbb -> OpenCV BGR, so the image and the report cannot drift apart."""
+    h = hex_color.lstrip("#")
+    return (int(h[4:6], 16), int(h[2:4], 16), int(h[0:2], 16))
+
+
+def _text_on(bgr) -> tuple:
+    """Black or white label text, whichever actually reads on the given fill."""
+    b, g, r = bgr
+    return (0, 0, 0) if (0.299 * r + 0.587 * g + 0.114 * b) > 150 else (255, 255, 255)
 
 
 def _migrate_legacy_dir():
@@ -173,17 +200,37 @@ def _annotate_image(img_bgr, detections):
     import numpy as np
     out = img_bgr.copy()
     img_h, img_w = out.shape[:2]
+    # Label boxes already drawn, to avoid stacking them. Seeded with the strip
+    # the watermark is composited into further down, which would otherwise be
+    # painted straight over any label placed near the top edge.
+    placed: list = [(0, 0, img_w, 22)]
+
+    def _free_slot(lx, ly, lw, lh):
+        """Nudge a label down until it clears the ones already placed."""
+        for _ in range(12):
+            box = (lx, ly, lx + lw, ly + lh)
+            if not any(box[0] < p[2] and p[0] < box[2] and
+                       box[1] < p[3] and p[1] < box[3] for p in placed):
+                break
+            ly += lh + 2
+        return min(ly, img_h - lh)
+
     for d in detections:
         x1, y1, x2, y2 = d["bbox_px"]
-        color = CONF_COLOR_BGR[d["band"]]
+        color = _hex_to_bgr(_object_color(d["id"]))
         cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
         label = f"#{d['id']} {d['class']} {d['confidence']:.2f}"
-        (lw, lh), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
-        ly = max(y1 - lh - 6, 0)
-        cv2.rectangle(out, (x1, ly), (x1 + lw + 4, ly + lh + 6), color, -1)
-        cv2.putText(out, label, (x1 + 2, ly + lh + 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1,
+        (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)
+        lw, lh = tw + 4, th + 6
+        lx = min(x1, img_w - lw)
+        # Prefer just above the box; drop inside it when there is no room,
+        # then slide down past any label already occupying that spot.
+        ly = _free_slot(lx, y1 - lh if y1 - lh >= 0 else y1, lw, lh)
+        cv2.rectangle(out, (lx, ly), (lx + lw, ly + lh), color, -1)
+        cv2.putText(out, label, (lx + 2, ly + lh - 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, _text_on(color), 1,
                     cv2.LINE_AA)
+        placed.append((lx, ly, lx + lw, ly + lh))
         cv2.circle(out, ((x1 + x2) // 2, (y1 + y2) // 2), 4, color, -1)
     # Watermark — exact same style as CubeSat camera images (PIL overlay)
     from PIL import Image as _Image, ImageDraw as _ImageDraw, ImageFont as _ImageFont
@@ -881,10 +928,11 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
         for d in detections:
             bc = CONF_COLOR_QT.get(d["band"], self._FG)
+            oc = _object_color(d["id"])
             self._log_line("dim", "─" * 44 + "\n")
             self._log_html(
-                f"<span style='color:{self._ORANGE}; font-weight:bold;'>"
-                f"  OBJECT #{d['id']:02d}  {d['class'].upper()}</span><br>"
+                f"<span style='color:{oc}; font-weight:bold;'>"
+                f"  &#9632; OBJECT #{d['id']:02d}  {d['class'].upper()}</span><br>"
             )
             self._log_html(
                 f"<span style='color:{self._DIM};'>  Confidence    : </span>"
