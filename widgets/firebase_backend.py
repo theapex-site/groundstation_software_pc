@@ -30,7 +30,7 @@ machine out at its next launch.
 from __future__ import annotations
 
 import hashlib
-import json
+import os
 import platform
 import sys
 import time
@@ -43,12 +43,38 @@ import requests
 FIREBASE_API_KEY = "AIzaSyA4BE0kpcF9o2D9PHbcD3DAvlJJBZ7UCk4"
 PROJECT_ID = "theapex-88dab"
 
-_IDENTITY = "https://identitytoolkit.googleapis.com/v1/accounts:"
-_FIRESTORE = (
-    "https://firestore.googleapis.com/v1/projects/"
-    + PROJECT_ID
-    + "/databases/(default)/documents"
-)
+# Point at the Firebase Emulator Suite instead of production by exporting the
+# same two variables Google's own SDKs honour, so firebase-admin on the API
+# side picks up the identical setting without a second switch:
+#
+#   set FIREBASE_AUTH_EMULATOR_HOST=127.0.0.1:9099
+#   set FIRESTORE_EMULATOR_HOST=127.0.0.1:8080
+#
+# Unset, everything goes to the live project. Nothing else in the app changes,
+# so what gets tested locally is the same code path that ships.
+_AUTH_EMU = os.environ.get("FIREBASE_AUTH_EMULATOR_HOST", "").strip()
+_FS_EMU = os.environ.get("FIRESTORE_EMULATOR_HOST", "").strip()
+USING_EMULATOR = bool(_AUTH_EMU or _FS_EMU)
+
+if _AUTH_EMU:
+    _IDENTITY = "http://" + _AUTH_EMU + "/identitytoolkit.googleapis.com/v1/accounts:"
+    _SECURETOKEN = "http://" + _AUTH_EMU + "/securetoken.googleapis.com/v1/token"
+else:
+    _IDENTITY = "https://identitytoolkit.googleapis.com/v1/accounts:"
+    _SECURETOKEN = "https://securetoken.googleapis.com/v1/token"
+
+if _FS_EMU:
+    _FIRESTORE = (
+        "http://" + _FS_EMU + "/v1/projects/" + PROJECT_ID
+        + "/databases/(default)/documents"
+    )
+else:
+    _FIRESTORE = (
+        "https://firestore.googleapis.com/v1/projects/"
+        + PROJECT_ID
+        + "/databases/(default)/documents"
+    )
+
 _TIMEOUT = 20
 
 
@@ -249,7 +275,7 @@ def refresh_session(session: dict) -> dict:
     """
     try:
         r = requests.post(
-            "https://securetoken.googleapis.com/v1/token?key=" + FIREBASE_API_KEY,
+            _SECURETOKEN + "?key=" + FIREBASE_API_KEY,
             data={"grant_type": "refresh_token", "refresh_token": session["refreshToken"]},
             timeout=_TIMEOUT,
         )
