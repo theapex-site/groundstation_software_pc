@@ -259,6 +259,22 @@ def _annotate_image(img_bgr, detections):
     return out
 
 
+def _local_timestamp(fmt: str = "%Y-%m-%d %H:%M:%S") -> str:
+    """
+    Local wall-clock time with an explicit UTC offset, e.g.
+    "2026-10-02 21:58:06 UTC+05:30".
+
+    Everything else in the GCS stamps local time — camera filenames, the
+    image watermark, flag-monitor and graph entries — so the report matches
+    rather than sitting 5.5 hours behind it in UTC. The offset is shown
+    instead of hardcoding "IST" because this is the operator's PC clock, not
+    a value the CubeSat sent.
+    """
+    now = datetime.datetime.now().astimezone()
+    off = now.strftime("%z")                       # e.g. +0530
+    return f"{now.strftime(fmt)} UTC{off[:3]}:{off[3:]}" if off else now.strftime(fmt)
+
+
 def _class_counts(detections) -> dict:
     counts: dict[str, int] = {}
     for d in detections:
@@ -270,7 +286,7 @@ def _build_txt_report(img_path: str, detections: list, summary: str,
                       elapsed_ms: float, conf_thresh: float,
                       img_w: int, img_h: int, received_pct: float = 100.0) -> str:
     """Return a plain-text report string matching the original log style."""
-    ts  = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    ts  = _local_timestamp()
     sep = "=" * 52
     thn = "-" * 52
     counts = _class_counts(detections)
@@ -903,7 +919,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._log_line("header",  "=" * 44 + "\n")
         self._log_line("header",  "  DETECTION REPORT\n")
         self._log_line("header",  "=" * 44 + "\n")
-        self._log_pair("Time",      datetime.datetime.utcnow().strftime("%H:%M:%S UTC"))
+        self._log_pair("Time",      _local_timestamp("%H:%M:%S"))
         self._log_pair("Image",     Path(self._img_path).name)
         self._log_pair("Inference", f"{elapsed_ms:.1f} ms")
         self._log_pair("Objects",   str(len(detections)))
