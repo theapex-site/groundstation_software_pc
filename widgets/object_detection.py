@@ -44,6 +44,8 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 
+from widgets.dialogs import ThemedMessageBox
+
 # ── BASE_PATH (mirrors config.py / right_panel.py pattern) ───────────────────
 if getattr(sys, "frozen", False):
     BASE_PATH = sys._MEIPASS
@@ -769,9 +771,9 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         """Load the most recently saved camera image from APEX_GCS_Saved/images/camera/."""
         cam_dir = Path(CAMERA_DIR)
         if not cam_dir.exists():
-            QtWidgets.QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self, "No Camera Images",
-                f"Camera directory not found:\n{CAMERA_DIR}"
+                "Camera directory not found.", CAMERA_DIR
             )
             return
         images = sorted(
@@ -784,9 +786,9 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
             reverse=True,
         )
         if not images:
-            QtWidgets.QMessageBox.information(
+            ThemedMessageBox.information(
                 self, "No Images",
-                "No captured images found in:\n" + str(cam_dir)
+                "No captured images found.", str(cam_dir)
             )
             return
         self._set_image_path(str(images[0]))
@@ -854,16 +856,15 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
     def _run_detect(self):
         if not self._img_path:
-            QtWidgets.QMessageBox.information(
+            ThemedMessageBox.information(
                 self, "No Image",
                 "Please load an image first (Last Captured or Upload)."
             )
             return
         if not self._ensure_model():
-            QtWidgets.QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self, "Model Not Available",
-                "The detection model could not be loaded.\n"
-                f"Expected path: {MODEL_PATH}"
+                "The detection model could not be loaded.", MODEL_PATH
             )
             return
 
@@ -900,7 +901,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._progress.setVisible(False)
         self._btn_test.setEnabled(True)
         self._bottom_lbl.setText(f"Error: {msg}")
-        QtWidgets.QMessageBox.critical(self, "Detection Error", msg)
+        ThemedMessageBox.critical(self, "Detection Error", msg)
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Report panel
@@ -989,7 +990,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
     def _save_result(self):
         if self._annotated_bgr is None:
-            QtWidgets.QMessageBox.information(
+            ThemedMessageBox.information(
                 self, "Nothing to Save",
                 "Run detection first (click ▶ Test)."
             )
@@ -1028,18 +1029,11 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
             print(f"[Drive] object detection upload error: {_ue}")
 
         self._bottom_lbl.setText(f"Saved → {img_path}")
-        msg = QtWidgets.QMessageBox(self)
-        msg.setWindowTitle("Saved")
-        msg.setText(f"Annotated image saved to:\n{img_path}\n\nReport saved to:\n{txt_path}")
-        msg.setIcon(QtWidgets.QMessageBox.Information)
-        msg.setStyleSheet("""
-            QMessageBox { background:#020617; color:#e2e8f0; font-family:Consolas; }
-            QLabel { color:#e2e8f0; font-family:Consolas; font-size:11px; }
-            QPushButton { background:#1e293b; color:#38bdf8; border:1px solid #38bdf8;
-                          padding:6px 20px; border-radius:5px; font-family:Consolas; }
-            QPushButton:hover { background:#38bdf8; color:#020617; }
-        """)
-        msg.exec_()
+        ThemedMessageBox.information(
+            self, "Saved",
+            "Detection result saved.",
+            f"{img_path}\n{txt_path}"
+        )
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Clear
