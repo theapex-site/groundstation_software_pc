@@ -1154,8 +1154,6 @@ class _ComPortPage(QtWidgets.QWidget):
         port_row.addWidget(self.combo)
         lay.addLayout(port_row)
 
-        self._refresh()
-
         # Buttons
         btn_row = QtWidgets.QHBoxLayout()
         refresh_btn = QtWidgets.QPushButton("🔄  Refresh")
@@ -1175,7 +1173,35 @@ class _ComPortPage(QtWidgets.QWidget):
         btn_row.addWidget(connect_btn)
         lay.addLayout(btn_row)
 
+        # Shown only when there is no port and the USB driver is missing, which
+        # is the one case where a customer is stuck with nothing to click.
+        self._driver_hint = QtWidgets.QLabel(
+            "No port? The CubeSat needs the Silicon Labs USB driver. "
+            "It is included with APEX GCS.")
+        self._driver_hint.setAlignment(QtCore.Qt.AlignCenter)
+        self._driver_hint.setWordWrap(True)
+        self._driver_hint.setStyleSheet(f"color:{_MUTED}; font-size:10px;")
+        self._driver_hint.hide()
+        lay.addWidget(self._driver_hint)
+
+        self._driver_btn = QtWidgets.QPushButton("⬇  Install USB Driver")
+        self._driver_btn.setMinimumHeight(30)
+        self._driver_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {_SURFACE}; color: {_TEXT};
+                border: 1px solid {_BORDER}; border-radius: 5px;
+                font-size: 11px;
+            }}
+            QPushButton:hover {{ border-color: {_ACCENT}; color: {_ACCENT}; }}
+        """)
+        self._driver_btn.clicked.connect(self._install_driver)
+        self._driver_btn.hide()
+        lay.addWidget(self._driver_btn)
+
         lay.addStretch(2)
+
+        # Last, because it decides whether to show the two widgets above.
+        self._refresh()
 
     def _refresh(self):
         self.combo.clear()
@@ -1184,6 +1210,44 @@ class _ComPortPage(QtWidgets.QWidget):
             self.combo.addItem(f"{p.device}  —  {p.description}")
         if not ports:
             self.combo.addItem("No ports found")
+        self._update_driver_offer(bool(ports))
+
+    def _update_driver_offer(self, have_ports: bool):
+        """Offer the bundled driver only when it would actually help."""
+        try:
+            import widgets.driver_install as drv
+            offer = (not have_ports) and drv.is_available() and not drv.is_installed()
+        except Exception:
+            offer = False
+        self._driver_hint.setVisible(offer)
+        self._driver_btn.setVisible(offer)
+
+    def _install_driver(self):
+        import widgets.driver_install as drv
+
+        if ThemedMessageBox.question(
+                self, "Install USB Driver",
+                "Install the " + drv.DEVICE_NAME + " driver?",
+                "Windows will ask for administrator permission. The driver is "
+                "supplied by Silicon Labs under their licence agreement, "
+                "included with APEX GCS.",
+                buttons=["Install", "Cancel"]) != "Install":
+            return
+
+        self._driver_btn.setEnabled(False)
+        self._driver_btn.setText("Installing…")
+        QtWidgets.QApplication.processEvents()
+        try:
+            ok, message = drv.install()
+        finally:
+            self._driver_btn.setEnabled(True)
+            self._driver_btn.setText("⬇  Install USB Driver")
+
+        if ok:
+            ThemedMessageBox.information(self, "Install USB Driver", message)
+            self._refresh()
+        else:
+            ThemedMessageBox.warning(self, "Install USB Driver", message)
 
     def _connect(self):
         port = self.combo.currentText().split("  —  ")[0].strip()

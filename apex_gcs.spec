@@ -16,6 +16,11 @@ _cv_d,  _cv_b,  _cv_h  = collect_all('cv2')
 added_files = [
     ("images",                      "images"),
     ("models",                      "models"),
+    # Silicon Labs CP210x driver, so a customer with no internet on the bench
+    # is not stuck hunting for it. Unmodified package, catalog included: the
+    # .cat signs a hash of silabser.inf, so editing the INF would invalidate
+    # the signature and Windows would then refuse to load it.
+    ("drivers",                     "drivers"),
 ]
 
 a = Analysis(
@@ -61,6 +66,12 @@ a = Analysis(
             "struct",
             "pickle",
             "webbrowser",
+
+            # widgets/driver_install.py — imported lazily, so PyInstaller's
+            # analysis does not see them.
+            "ctypes",
+            "ctypes.wintypes",
+            "winreg",
 
             "requests",
 
