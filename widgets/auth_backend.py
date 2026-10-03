@@ -160,11 +160,24 @@ def _guess_mime(path: str) -> str:
         ".json": "application/json",
     }.get(ext, "application/octet-stream")
 
+# Firebase Cloud Storage is the destination now; Drive is kept running beside
+# it until Storage has been seen to work on real hardware. Set APEX_BACKUP=drive
+# to fall back, or APEX_BACKUP=storage to stop writing to Drive once satisfied.
+_BACKUP_MODE = os.environ.get("APEX_BACKUP", "both").lower()
+
+
 def upload_file(email: str, local_path: str, subfolder: str = "files") -> bool:
     if not os.path.isfile(local_path):
         return False
     if subfolder == "images":
         subfolder = "received images"
+
+    storage_ok = None
+    if _BACKUP_MODE in ("both", "storage"):
+        storage_ok = _upload_to_storage(local_path, subfolder)
+    if _BACKUP_MODE == "storage":
+        return bool(storage_ok)
+
     try:
         from googleapiclient.http import MediaFileUpload
         svc      = _get_drive()
@@ -183,6 +196,31 @@ def upload_file(email: str, local_path: str, subfolder: str = "files") -> bool:
         print(f"[Drive] upload failed, queuing '{local_path}': {e}")
         _enqueue(email, local_path, subfolder)
         return False
+
+def _upload_to_storage(local_path: str, subfolder: str) -> bool:
+    """
+    Back up through Firebase Cloud Storage.
+
+    Never raises. A full allowance is reported once and then left alone: the
+    file is still safe on this machine in APEX_GCS_Saved, and nothing about a
+    mission should stop because a backup did.
+    """
+    import widgets.firebase_backend as fb
+    session = fb.current_session()
+    if not session:
+        return False
+    try:
+        return fb.upload_backup(session, local_path, subfolder)
+    except fb.AuthError as exc:
+        if getattr(exc, "full", False):
+            print("[Backup] allowance full, not uploading '" + local_path + "'")
+        else:
+            print("[Backup] " + str(exc))
+        return False
+    except Exception as exc:
+        print("[Backup] unexpected error for '" + local_path + "': " + str(exc))
+        return False
+
 
 # ── Background retry worker ────────────────────────────────────────────────────
 

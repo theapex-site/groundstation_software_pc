@@ -477,3 +477,113 @@ def device_still_ours(session: dict, key: str) -> tuple[bool, str]:
         return False, ("You signed in to APEX GCS on another computer.\n\n"
                        "Only one computer can use a licence at a time.")
     return True, ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  Backup storage (Firebase Cloud Storage, via Cloud Functions)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Uploads are ticketed. The app asks gcsApi for a one-time signed URL, which it
+# only gets if the file looks like APEX GCS output and the allowance has room,
+# then PUTs the bytes straight to the bucket. Storage rules refuse client writes
+# outright, so there is no way round the ticket, and a Cloud Function inspects
+# what landed and removes anything that is not genuinely ours.
+#
+# Nothing here is a secret: the ID token is the customer's own, and the function
+# URL is public. No credential ships in the build for this, which is the whole
+# point of moving off the Drive token.
+
+# The predictable alias Firebase publishes alongside the Cloud Run URL. Override
+# with APEX_GCS_API if the project is ever deployed to another region.
+GCS_API_URL = os.environ.get(
+    "APEX_GCS_API",
+    "https://us-central1-" + PROJECT_ID + ".cloudfunctions.net/gcsApi",
+)
+
+STORAGE_TIMEOUT = 120          # a slow link still has to finish a 2 MB image
+
+
+def _gcs_api(session: dict, action: str, **payload):
+    """One call to the backup API, as the signed-in customer."""
+    session = ensure_fresh(session)
+    body = dict(payload)
+    body["action"] = action
+    try:
+        r = requests.post(
+            GCS_API_URL,
+            json=body,
+            headers={"Authorization": "Bearer " + session["idToken"]},
+            timeout=_TIMEOUT,
+        )
+    except requests.RequestException as exc:
+        raise AuthError("Could not reach the APEX backup service.\n" + str(exc)) from exc
+    data = r.json() if r.content else {}
+    if r.status_code >= 400:
+        err = AuthError(data.get("message") or ("Backup error " + str(r.status_code)))
+        err.full = bool(data.get("full"))
+        err.quota = data.get("quota")
+        raise err
+    return data
+
+
+def backup_quota(session: dict) -> dict:
+    """Used / allowed / free, in bytes, plus the file count."""
+    return _gcs_api(session, "quota").get("quota") or {}
+
+
+def list_backups(session: dict, limit: int = 200) -> list:
+    """The customer's backed-up files, newest first, each with a 1-hour link."""
+    return _gcs_api(session, "listBackups", limit=limit).get("files") or []
+
+
+def upload_backup(session: dict, local_path: str, subfolder: str = "files") -> bool:
+    """
+    Back one file up. Returns True on success.
+
+    Raises AuthError only for problems worth telling the user about, chiefly a
+    full allowance; everything else is logged and returns False, because a
+    backup failing must never interrupt a mission.
+    """
+    if not os.path.isfile(local_path):
+        return False
+    size = os.path.getsize(local_path)
+    name = os.path.basename(local_path)
+    ext = os.path.splitext(name)[1].lower()
+    content_type = {
+        ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+        ".txt": "text/plain",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }.get(ext, "application/octet-stream")
+
+    ticket = _gcs_api(
+        session, "uploadTicket",
+        filename=name, subfolder=subfolder,
+        sizeBytes=size, contentType=content_type,
+    )
+
+    try:
+        with open(local_path, "rb") as f:
+            r = requests.put(
+                ticket["uploadUrl"], data=f,
+                headers={"Content-Type": ticket["contentType"]},
+                timeout=STORAGE_TIMEOUT,
+            )
+    except requests.RequestException as exc:
+        print("[Backup] upload failed for '" + local_path + "': " + str(exc))
+        return False
+    if r.status_code >= 400:
+        print("[Backup] bucket refused '" + local_path + "': " + str(r.status_code))
+        return False
+    return True
+
+
+def human_bytes(n) -> str:
+    try:
+        v = float(n or 0)
+    except (TypeError, ValueError):
+        return "0 B"
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if v < 1024 or unit == "TB":
+            return ("{:.0f} {}" if unit in ("B", "KB") else "{:.2f} {}").format(v, unit)
+        v /= 1024.0
+    return "0 B"

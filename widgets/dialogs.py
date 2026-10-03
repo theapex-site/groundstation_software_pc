@@ -1777,6 +1777,41 @@ class UserProfileDialog(QtWidgets.QDialog):
 
         root.addWidget(card)
 
+        # ── Backup storage ────────────────────────────────────────────────────
+        store = QtWidgets.QFrame()
+        store.setObjectName("profileCard")
+        store_lay = QtWidgets.QVBoxLayout(store)
+        store_lay.setContentsMargins(16, 12, 16, 12)
+        store_lay.setSpacing(6)
+
+        head = QtWidgets.QHBoxLayout()
+        st_title = QtWidgets.QLabel("Backup Storage")
+        st_title.setStyleSheet(f"color:{_ACCENT}; font-size:12px; font-weight:bold;")
+        head.addWidget(st_title)
+        head.addStretch()
+        self._store_amount = QtWidgets.QLabel("—")
+        self._store_amount.setStyleSheet(f"color:{_TEXT}; font-size:12px; font-weight:bold;")
+        head.addWidget(self._store_amount)
+        store_lay.addLayout(head)
+
+        self._store_bar = QtWidgets.QProgressBar()
+        self._store_bar.setRange(0, 100)
+        self._store_bar.setValue(0)
+        self._store_bar.setTextVisible(False)
+        self._store_bar.setFixedHeight(8)
+        self._store_bar.setStyleSheet(f"""
+            QProgressBar {{ background:{_BG}; border:1px solid {_BORDER};
+                            border-radius:4px; }}
+            QProgressBar::chunk {{ background:{_ACCENT}; border-radius:4px; }}
+        """)
+        store_lay.addWidget(self._store_bar)
+
+        self._store_note = QtWidgets.QLabel("Checking…")
+        self._store_note.setStyleSheet(f"color:{_MUTED}; font-size:10px;")
+        store_lay.addWidget(self._store_note)
+
+        root.addWidget(store)
+
         # ── Loading indicator ─────────────────────────────────────────────────
         self._status_lbl = QtWidgets.QLabel("Loading profile…")
         self._status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
@@ -1835,11 +1870,14 @@ class UserProfileDialog(QtWidgets.QDialog):
 
     # ── Data loading (runs in background thread) ──────────────────────────────
     _profile_ready = QtCore.pyqtSignal(object, object)   # (info_dict, drive_url)
+    _quota_ready   = QtCore.pyqtSignal(object)          # backup quota, or None
 
     def _load_profile(self):
         """Fetch user info + Drive URL in a background thread."""
         import widgets.auth_backend as auth
         self._profile_ready.connect(self._on_profile_loaded)
+
+        self._quota_ready.connect(self._on_quota_loaded)
 
         def worker():
             info = None
@@ -1852,7 +1890,50 @@ class UserProfileDialog(QtWidgets.QDialog):
             url = auth.get_user_drive_url(self._email)
             self._profile_ready.emit(info, url)
 
+            # Separate call, and deliberately after the profile: the backup
+            # service is a different endpoint and should not hold up the rest
+            # of the dialog if it is slow or unreachable.
+            quota = None
+            if session:
+                try:
+                    quota = fb.backup_quota(session)
+                except Exception:
+                    quota = None
+            self._quota_ready.emit(quota)
+
         threading.Thread(target=worker, daemon=True).start()
+
+    @QtCore.pyqtSlot(object)
+    def _on_quota_loaded(self, quota):
+        if not quota:
+            # Reset the bar too, or it keeps whatever it last showed and
+            # implies a usage figure the app could not actually confirm.
+            self._store_amount.setText("—")
+            self._store_bar.setValue(0)
+            self._store_note.setText("Could not reach the backup service.")
+            return
+        used = int(quota.get("used") or 0)
+        allowed = int(quota.get("allowed") or 0) or 1
+        pct = min(100, int(used * 100 / allowed))
+        self._store_amount.setText(
+            fb.human_bytes(used) + " / " + fb.human_bytes(allowed))
+        self._store_bar.setValue(pct)
+        # Amber past 80%, red past 95%, so a customer sees it filling up before
+        # an upload is refused rather than after.
+        colour = "#ef4444" if pct >= 95 else "#facc15" if pct >= 80 else _ACCENT
+        self._store_bar.setStyleSheet(f"""
+            QProgressBar {{ background:{_BG}; border:1px solid {_BORDER};
+                            border-radius:4px; }}
+            QProgressBar::chunk {{ background:{colour}; border-radius:4px; }}
+        """)
+        files = int(quota.get("files") or 0)
+        last = quota.get("lastUploadAt") or ""
+        bits = [str(files) + (" file" if files == 1 else " files")]
+        if pct >= 95:
+            bits.append("almost full, contact APEX to increase it")
+        if last:
+            bits.append("last updated " + str(last)[:16].replace("T", " "))
+        self._store_note.setText("  ·  ".join(bits))
 
     @QtCore.pyqtSlot(object, object)
     def _on_profile_loaded(self, info, url):
