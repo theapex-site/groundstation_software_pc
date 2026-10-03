@@ -95,7 +95,12 @@ a = Analysis(
         "tensorflow",
         "keras",
         "sklearn",
-        "scipy",        
+        "scipy",
+        # Swept in from site-packages, not imported anywhere in the app:
+        # jaxlib alone was 195 MB of a 1.5 GB build, pandas another 18 MB.
+        "jax",
+        "jaxlib",
+        "pandas",
         "IPython",
         "jupyter",
         "notebook",
