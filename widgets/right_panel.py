@@ -331,7 +331,7 @@ class RightPanel(QtWidgets.QFrame):
             )
             os.startfile(save_dir)
 
-            # ── Auto-backup xlsx to Google Drive ─────────────────────────────
+            # ── Auto-backup xlsx to the customer's APEX backup ──────────────────
             user_email = getattr(parent, "user_email", "")
             if user_email:
                 import widgets.auth_backend as auth

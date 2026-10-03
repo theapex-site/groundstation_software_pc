@@ -1091,11 +1091,9 @@ class _SignUpPage(QtWidgets.QWidget):
             QtWidgets.QMessageBox.critical(self, "Sign Up Failed", str(exc))
             return
 
-        # The Drive backup folder is unrelated to licensing; never block on it.
-        import threading as _t
-        _t.Thread(target=auth.create_user_drive_folder,
-                  args=(email,), daemon=True).start()
-
+        # Nothing to set up for backups any more: Storage folders come into
+        # being with the first upload, so there is no folder-creation call to
+        # wait on here.
         QtWidgets.QMessageBox.information(
             self, "Account Created",
             "Account created and licence activated. Please sign in.")
@@ -1678,19 +1676,26 @@ class _MyBackupsDialog(QtWidgets.QDialog):
     shipped inside every build; this reads only the signed-in customer's own
     files, through links the server mints on request and which expire in an
     hour.
+
+    Every row carries a checkbox, ticked on open, so "Download Selected" and
+    "Delete Selected" act on the whole backup by default and the customer
+    unticks what they want to leave alone.
     """
 
-    _loaded = QtCore.pyqtSignal(object, object)     # (files, error)
+    _loaded   = QtCore.pyqtSignal(object, object)   # (files, error)
+    _finished = QtCore.pyqtSignal(object, object)   # (message, error)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("APEX GCS — My Backups")
-        self.setMinimumSize(640, 420)
+        self.setMinimumSize(720, 460)
         self.setModal(True)
         self.setStyleSheet(_BASE_STYLE)
         self._files = []
+        self._busy = False
         self._build()
         self._loaded.connect(self._on_loaded)
+        self._finished.connect(self._on_finished)
         self._load()
 
     def _build(self):
@@ -1706,15 +1711,22 @@ class _MyBackupsDialog(QtWidgets.QDialog):
         self._subtitle.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
         lay.addWidget(self._subtitle)
 
-        self._table = QtWidgets.QTableWidget(0, 4)
-        self._table.setHorizontalHeaderLabels(["File", "Folder", "Size", "Backed up"])
+        self._all_cb = QtWidgets.QCheckBox("Select all")
+        self._all_cb.setChecked(True)
+        self._all_cb.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        self._all_cb.clicked.connect(self._toggle_all)
+        lay.addWidget(self._all_cb)
+
+        self._table = QtWidgets.QTableWidget(0, 5)
+        self._table.setHorizontalHeaderLabels(["", "File", "Folder", "Size", "Backed up"])
         self._table.verticalHeader().setVisible(False)
         self._table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self._table.horizontalHeader().setStretchLastSection(True)
-        self._table.setColumnWidth(0, 280)
-        self._table.setColumnWidth(1, 130)
-        self._table.setColumnWidth(2, 80)
+        self._table.setColumnWidth(0, 30)
+        self._table.setColumnWidth(1, 280)
+        self._table.setColumnWidth(2, 130)
+        self._table.setColumnWidth(3, 80)
         self._table.setStyleSheet(f"""
             QTableWidget {{ background:{_BG}; color:{_TEXT}; gridline-color:{_BORDER};
                             border:1px solid {_BORDER}; border-radius:6px; font-size:11px; }}
@@ -1726,21 +1738,61 @@ class _MyBackupsDialog(QtWidgets.QDialog):
         lay.addWidget(self._table, 1)
 
         row = QtWidgets.QHBoxLayout()
-        self._open_btn = QtWidgets.QPushButton("Open")
-        self._open_btn.clicked.connect(self._open_selected)
-        self._open_btn.setEnabled(False)
-        row.addWidget(self._open_btn)
-        refresh = QtWidgets.QPushButton("Refresh")
-        refresh.clicked.connect(self._load)
-        row.addWidget(refresh)
+        self._dl_btn = QtWidgets.QPushButton("Download Selected")
+        self._dl_btn.setMinimumHeight(32)
+        self._dl_btn.clicked.connect(self._download_checked)
+        row.addWidget(self._dl_btn)
+
+        self._del_btn = QtWidgets.QPushButton("Delete Selected")
+        self._del_btn.setMinimumHeight(32)
+        self._del_btn.setStyleSheet(
+            "QPushButton { background:#3a1414; color:#ff8080;"
+            f" border:1px solid #6b2020; border-radius:6px; padding:6px 14px; }}"
+            "QPushButton:hover { background:#4d1a1a; }"
+            f"QPushButton:disabled {{ color:{_MUTED}; border-color:{_BORDER}; background:{_SURFACE}; }}")
+        self._del_btn.clicked.connect(self._delete_checked)
+        row.addWidget(self._del_btn)
+
+        self._refresh_btn = QtWidgets.QPushButton("Refresh")
+        self._refresh_btn.clicked.connect(self._load)
+        row.addWidget(self._refresh_btn)
         row.addStretch()
         close = QtWidgets.QPushButton("Close")
         close.clicked.connect(self.accept)
         row.addWidget(close)
         lay.addLayout(row)
 
-        self._table.itemSelectionChanged.connect(
-            lambda: self._open_btn.setEnabled(bool(self._table.selectedItems())))
+        self._set_buttons_enabled(False)
+
+    # ── selection helpers ────────────────────────────────────────────────────
+
+    def _set_buttons_enabled(self, on: bool):
+        self._dl_btn.setEnabled(on)
+        self._del_btn.setEnabled(on)
+
+    def _toggle_all(self, checked: bool):
+        for r in range(self._table.rowCount()):
+            item = self._table.item(r, 0)
+            if item is not None:
+                item.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
+
+    def _checked_rows(self) -> list:
+        rows = []
+        for r in range(self._table.rowCount()):
+            item = self._table.item(r, 0)
+            if item is not None and item.checkState() == QtCore.Qt.Checked:
+                rows.append(r)
+        return rows
+
+    def _on_item_changed(self, item):
+        if item.column() != 0:
+            return
+        n = len(self._checked_rows())
+        self._set_buttons_enabled(bool(n) and not self._busy)
+        # Kept in step with the rows without firing _toggle_all back at them.
+        self._all_cb.blockSignals(True)
+        self._all_cb.setChecked(n == self._table.rowCount() and n > 0)
+        self._all_cb.blockSignals(False)
 
     def _load(self):
         self._subtitle.setText("Loading…")
@@ -1768,18 +1820,38 @@ class _MyBackupsDialog(QtWidgets.QDialog):
             self._subtitle.setText(
                 "Nothing backed up yet. Images and reports are uploaded "
                 "automatically as they are produced.")
+            self._set_buttons_enabled(False)
             return
         total = sum(int(f.get("size") or 0) for f in self._files)
         n = len(self._files)
         self._subtitle.setText(
-            "{} {}, {}. Double-click one to open it.".format(
+            "{} {}, {}. Untick anything you want to leave alone.".format(
                 n, "file" if n == 1 else "files", fb.human_bytes(total)))
-        self._table.setRowCount(len(self._files))
+
+        # Filling the table fires itemChanged for every cell, which would
+        # recount the selection row by row, so it is disconnected meanwhile.
+        try:
+            self._table.itemChanged.disconnect(self._on_item_changed)
+        except TypeError:
+            pass
+        self._table.setRowCount(n)
         for r, f in enumerate(self._files):
             when = str(f.get("uploadedAt") or "")[:16].replace("T", " ")
+            cb = QtWidgets.QTableWidgetItem()
+            cb.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
+            cb.setCheckState(QtCore.Qt.Checked)
+            self._table.setItem(r, 0, cb)
             for c, v in enumerate([f.get("name", ""), f.get("folder", ""),
-                                   fb.human_bytes(f.get("size")), when]):
+                                   fb.human_bytes(f.get("size")), when], start=1):
                 self._table.setItem(r, c, QtWidgets.QTableWidgetItem(str(v)))
+        self._table.itemChanged.connect(self._on_item_changed)
+
+        self._all_cb.blockSignals(True)
+        self._all_cb.setChecked(True)
+        self._all_cb.blockSignals(False)
+        self._set_buttons_enabled(True)
+
+    # ── actions ──────────────────────────────────────────────────────────────
 
     def _open_selected(self):
         rows = {i.row() for i in self._table.selectedItems()}
@@ -1793,11 +1865,115 @@ class _MyBackupsDialog(QtWidgets.QDialog):
             ThemedMessageBox.warning(self, "Unavailable",
                                      "That file has no download link right now.")
 
+    def _begin(self, note: str):
+        self._busy = True
+        self._set_buttons_enabled(False)
+        self._refresh_btn.setEnabled(False)
+        self._subtitle.setText(note)
+
+    @QtCore.pyqtSlot(object, object)
+    def _on_finished(self, message, error):
+        self._busy = False
+        self._refresh_btn.setEnabled(True)
+        if error:
+            ThemedMessageBox.warning(self, "Backup", str(error))
+        elif message:
+            ThemedMessageBox.information(self, "Backup", str(message))
+        self._load()
+
+    def _download_checked(self):
+        rows = self._checked_rows()
+        if not rows:
+            return
+        folder = QtWidgets.QFileDialog.getExistingDirectory(
+            self, "Where should the backup be saved?",
+            os.path.expanduser("~"))
+        if not folder:
+            return
+
+        picked = [self._files[r] for r in rows]
+        self._begin("Downloading {} file(s)…".format(len(picked)))
+
+        def worker():
+            session = fb.current_session()
+            if not session:
+                self._finished.emit(None, "Not signed in.")
+                return
+            ok = 0
+            bad = []
+            for f in picked:
+                # Each file keeps its folder, so a restore looks like the
+                # APEX_GCS_Saved tree it came from rather than one flat heap.
+                sub = str(f.get("folder") or "")
+                name = str(f.get("name") or "")
+                dest = os.path.join(folder, sub, name) if sub else os.path.join(folder, name)
+                try:
+                    if fb.download_backup(session, f.get("url", ""), dest):
+                        ok += 1
+                    else:
+                        bad.append(name)
+                except Exception as exc:
+                    print("[Backup] download error for '" + name + "': " + str(exc))
+                    bad.append(name)
+            msg = "Saved {} of {} file(s) to:\n{}".format(ok, len(picked), folder)
+            if bad:
+                msg += "\n\nCould not download: " + ", ".join(bad[:5])
+                if len(bad) > 5:
+                    msg += " and {} more".format(len(bad) - 5)
+            self._finished.emit(msg, None)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _delete_checked(self):
+        rows = self._checked_rows()
+        if not rows:
+            return
+        picked = [self._files[r] for r in rows]
+        paths = [f.get("path") for f in picked if f.get("path")]
+        if not paths:
+            ThemedMessageBox.warning(
+                self, "Cannot delete",
+                "This list is from an older version of the backup service.\n"
+                "Click Refresh and try again.")
+            return
+
+        freed = fb.human_bytes(sum(int(f.get("size") or 0) for f in picked))
+        n = len(paths)
+        answer = ThemedMessageBox.question(
+            self, "Delete backups",
+            "Delete {} {} from your APEX backup and free {}?".format(
+                n, "file" if n == 1 else "files", freed),
+            "The copies on this computer in APEX_GCS_Saved are not touched, "
+            "but the backup copies cannot be recovered.",
+            buttons=["Delete", "Cancel"], danger_buttons=["Delete"])
+        if answer != "Delete":
+            return
+
+        self._begin("Deleting {} file(s)…".format(n))
+
+        def worker():
+            session = fb.current_session()
+            if not session:
+                self._finished.emit(None, "Not signed in.")
+                return
+            try:
+                res = fb.delete_backups(session, paths)
+            except Exception as exc:
+                self._finished.emit(None, str(exc))
+                return
+            msg = "Deleted {} file(s), freeing {}.".format(
+                res.get("deleted", 0), fb.human_bytes(res.get("freedBytes")))
+            if res.get("failed"):
+                msg += "\n\n{} could not be deleted.".format(res["failed"])
+            self._finished.emit(msg, None)
+
+        threading.Thread(target=worker, daemon=True).start()
+
 
 class UserProfileDialog(QtWidgets.QDialog):
     """
-    Shows the logged-in user's profile info, a Logout button, and a
-    link to open their personal Google Drive folder.
+    Shows the logged-in user's profile info, their backup allowance, a button
+    that opens My Backups, and a Logout button.
 
     Signals:
         logout_requested  — emitted when the user clicks Logout
@@ -1948,10 +2124,9 @@ class UserProfileDialog(QtWidgets.QDialog):
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.setSpacing(10)
 
-        self._drive_btn = QtWidgets.QPushButton("🗂  My Backups")
-        self._drive_btn.setMinimumHeight(34)
-        self._drive_btn.setEnabled(True)   # always enabled — fallback URL used if fetch not done yet
-        self._drive_btn.setStyleSheet(f"""
+        self._backups_btn = QtWidgets.QPushButton("🗂  My Backups")
+        self._backups_btn.setMinimumHeight(34)
+        self._backups_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_SURFACE};
                 color: {_ACCENT};
@@ -1968,7 +2143,7 @@ class UserProfileDialog(QtWidgets.QDialog):
                 color: {_MUTED};
             }}
         """)
-        self._drive_btn.clicked.connect(self._open_drive)
+        self._backups_btn.clicked.connect(self._open_backups)
 
         logout_btn = QtWidgets.QPushButton("⏻  Logout")
         logout_btn.setMinimumHeight(34)
@@ -1988,17 +2163,16 @@ class UserProfileDialog(QtWidgets.QDialog):
         """)
         logout_btn.clicked.connect(self._do_logout)
 
-        btn_row.addWidget(self._drive_btn, 1)
+        btn_row.addWidget(self._backups_btn, 1)
         btn_row.addWidget(logout_btn, 1)
         root.addLayout(btn_row)
 
     # ── Data loading (runs in background thread) ──────────────────────────────
-    _profile_ready = QtCore.pyqtSignal(object, object)   # (info_dict, drive_url)
+    _profile_ready = QtCore.pyqtSignal(object, object)   # (info_dict, unused)
     _quota_ready   = QtCore.pyqtSignal(object)          # backup quota, or None
 
     def _load_profile(self):
-        """Fetch user info + Drive URL in a background thread."""
-        import widgets.auth_backend as auth
+        """Fetch the profile and the backup allowance in background threads."""
         self._profile_ready.connect(self._on_profile_loaded)
 
         self._quota_ready.connect(self._on_quota_loaded)
@@ -2007,11 +2181,9 @@ class UserProfileDialog(QtWidgets.QDialog):
             # One Firestore read, emitted immediately, so the card fills as
             # soon as it possibly can.
             #
-            # This used to wait on auth.get_user_drive_url() first, which is
-            # six Google Drive round-trips (build the service, find-or-create
-            # the user's folder, three subfolders, then a share call) before a
-            # single field appeared. The URL it returned is no longer used for
-            # anything: the button opens My Backups now, from Firebase Storage.
+            # This used to wait on a Google Drive call first, which was six
+            # round-trips (build the service, find-or-create the folder, three
+            # subfolders, then a share call) before a single field appeared.
             info = None
             session = fb.current_session()
             if session:
@@ -2097,14 +2269,14 @@ class UserProfileDialog(QtWidgets.QDialog):
 
 
     # ── Actions ───────────────────────────────────────────────────────────────
-    def _open_drive(self):
+    def _open_backups(self):
         """
         Show what is in Firebase Storage.
 
         Was a link to a shared Google Drive folder, reachable only with a token
         that shipped inside every build. Now lists the signed-in customer's own
         files, through links the server mints on request and which expire in an
-        hour.
+        hour, and lets them download or delete what they choose.
         """
         _MyBackupsDialog(self).exec_()
 
@@ -2116,7 +2288,6 @@ class UserProfileDialog(QtWidgets.QDialog):
             danger_buttons=["Logout"],
         )
         if reply == "Logout":
-            # Log the logout event to ActiveUsers sheet (non-blocking)
             import threading as _t
             _t.Thread(target=fb.log_logout, daemon=True).start()
             self.logout_requested.emit()

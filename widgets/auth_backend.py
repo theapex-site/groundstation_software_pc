@@ -1,11 +1,12 @@
 """
 widgets/auth_backend.py
 ───────────────────────
-Google Drive backup for APEX GCS — captured images, detection results and
-mission files, uploaded to the customer's folder with an offline retry queue.
+Backup for APEX GCS — captured images, detection results and mission files,
+uploaded to the customer's own folder in Firebase Cloud Storage with an offline
+retry queue.
 
-Accounts, OTP, passwords and the Google Sheet they lived in are gone from
-here; see widgets/firebase_backend.py and the note at the bottom of this file.
+Accounts, OTP, passwords and the Google Sheet they lived in are gone from here;
+see widgets/firebase_backend.py and the note at the bottom of this file.
 """
 
 import json
@@ -13,45 +14,11 @@ import os
 import threading
 import time
 
-_HERE          = os.path.dirname(os.path.abspath(__file__))
-
 _APPDATA    = os.environ.get("APPDATA", os.path.expanduser("~"))
 _QUEUE_DIR  = os.path.join(_APPDATA, "ApexGCS")
 _QUEUE_FILE = os.path.join(_QUEUE_DIR, "upload_queue.json")
 os.makedirs(_QUEUE_DIR, exist_ok=True)
 
-DRIVE_ROOT_FOLDER_ID = "1B-PerIYcBrNHy5rAIDqDObaV8zghoC6g"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  Internal helpers
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _get_drive():
-    from googleapiclient.discovery import build
-    from google_auth_oauthlib.flow import InstalledAppFlow
-    from google.auth.transport.requests import Request
-    import pickle
-
-    SCOPES     = ["https://www.googleapis.com/auth/drive"]
-    token_file = os.path.join(_HERE, "drive_token.pickle")
-    oauth_file = os.path.join(_HERE, "drive_oauth.json")
-
-    creds = None
-    if os.path.exists(token_file):
-        with open(token_file, "rb") as f:
-            creds = pickle.load(f)
-
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow  = InstalledAppFlow.from_client_secrets_file(oauth_file, SCOPES)
-            creds = flow.run_local_server(port=0)
-        with open(token_file, "wb") as f:
-            pickle.dump(creds, f)
-
-    return build("drive", "v3", credentials=creds)
 
 # ── Offline queue helpers ──────────────────────────────────────────────────────
 
@@ -69,156 +36,57 @@ def _save_queue(q: list):
     except Exception:
         pass
 
-def _enqueue(email: str, local_path: str, subfolder: str):
+def _enqueue(local_path: str, subfolder: str):
     q = _load_queue()
     for item in q:
-        if item["path"] == local_path and item["email"] == email:
+        if item.get("path") == local_path:
             return
-    q.append({"email": email, "path": local_path, "sub": subfolder})
+    q.append({"path": local_path, "sub": subfolder})
     _save_queue(q)
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Drive folder management
-# ══════════════════════════════════════════════════════════════════════════════
-
-def _find_folder(service, name: str, parent_id: str):
-    q = (
-        f"name='{name}' and mimeType='application/vnd.google-apps.folder'"
-        f" and '{parent_id}' in parents and trashed=false"
-    )
-    try:
-        results = service.files().list(q=q, fields="files(id)").execute()
-        files   = results.get("files", [])
-        if files:
-            return files[0]["id"]
-    except Exception:
-        pass
-    return None
-
-def _create_folder(service, name: str, parent_id: str) -> str:
-    meta = {
-        "name": name,
-        "mimeType": "application/vnd.google-apps.folder",
-        "parents": [parent_id],
-    }
-    f = service.files().create(body=meta, fields="id").execute()
-    return f["id"]
-
-def _get_or_create_folder(service, name: str, parent_id: str) -> str:
-    fid = _find_folder(service, name, parent_id)
-    return fid if fid else _create_folder(service, name, parent_id)
-
-def _share_folder(service, folder_id: str, email: str):
-    """Share folder with user as reader — view only, no upload/edit."""
-    try:
-        service.permissions().create(
-            fileId=folder_id,
-            body={"type": "user", "role": "reader", "emailAddress": email},
-            sendNotificationEmail=False,
-            fields="id",
-        ).execute()
-    except Exception:
-        pass
-
-def create_user_drive_folder(email: str):
-    try:
-        svc         = _get_drive()
-        user_folder = _get_or_create_folder(svc, email, DRIVE_ROOT_FOLDER_ID)
-        _get_or_create_folder(svc, "received images",  user_folder)
-        _get_or_create_folder(svc, "object detection", user_folder)
-        _get_or_create_folder(svc, "files",            user_folder)
-        _share_folder(svc, user_folder, email)
-        return user_folder
-    except Exception as e:
-        print(f"[Drive] create_user_drive_folder failed: {e}")
-        return None
-
-def get_user_drive_url(email: str):
-    try:
-        svc = _get_drive()
-        fid = _get_or_create_folder(svc, email, DRIVE_ROOT_FOLDER_ID)
-        _get_or_create_folder(svc, "received images",  fid)
-        _get_or_create_folder(svc, "object detection", fid)
-        _get_or_create_folder(svc, "files",            fid)
-        _share_folder(svc, fid, email)
-        return f"https://drive.google.com/drive/folders/{fid}"
-    except Exception:
-        return None
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  File upload  (with offline queue fallback)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _guess_mime(path: str) -> str:
-    ext = os.path.splitext(path)[1].lower()
-    return {
-        ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-        ".png": "image/png",  ".gif":  "image/gif",
-        ".pdf": "application/pdf",
-        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        ".csv":  "text/csv",  ".txt":  "text/plain",
-        ".json": "application/json",
-    }.get(ext, "application/octet-stream")
+def upload_file(email: str = "", local_path: str = "", subfolder: str = "files") -> bool:
+    """
+    Back one file up to the signed-in customer's Storage folder.
 
-# Firebase Cloud Storage is the destination now; Drive is kept running beside
-# it until Storage has been seen to work on real hardware. Set APEX_BACKUP=drive
-# to fall back, or APEX_BACKUP=storage to stop writing to Drive once satisfied.
-_BACKUP_MODE = os.environ.get("APEX_BACKUP", "both").lower()
+    `email` is ignored and kept only so the existing call sites do not all have
+    to change; the destination comes from whoever is signed in, which is the
+    whole point of the move off a shared Drive folder.
 
-
-def upload_file(email: str, local_path: str, subfolder: str = "files") -> bool:
-    if not os.path.isfile(local_path):
+    Never raises. A failure is queued and retried, because the file is already
+    safe on this machine in APEX_GCS_Saved and nothing about a mission should
+    stop because a backup did.
+    """
+    if not local_path or not os.path.isfile(local_path):
         return False
     if subfolder == "images":
         subfolder = "received images"
 
-    storage_ok = None
-    if _BACKUP_MODE in ("both", "storage"):
-        storage_ok = _upload_to_storage(local_path, subfolder)
-    if _BACKUP_MODE == "storage":
-        return bool(storage_ok)
-
-    try:
-        from googleapiclient.http import MediaFileUpload
-        svc      = _get_drive()
-        user_fid = _get_or_create_folder(svc, email, DRIVE_ROOT_FOLDER_ID)
-        sub_fid  = _get_or_create_folder(svc, subfolder, user_fid)
-        filename  = os.path.basename(local_path)
-        mime_type = _guess_mime(local_path)
-        media     = MediaFileUpload(local_path, mimetype=mime_type, resumable=True)
-        svc.files().create(
-            body={"name": filename, "parents": [sub_fid]},
-            media_body=media,
-            fields="id",
-        ).execute()
-        return True
-    except Exception as e:
-        print(f"[Drive] upload failed, queuing '{local_path}': {e}")
-        _enqueue(email, local_path, subfolder)
-        return False
-
-def _upload_to_storage(local_path: str, subfolder: str) -> bool:
-    """
-    Back up through Firebase Cloud Storage.
-
-    Never raises. A full allowance is reported once and then left alone: the
-    file is still safe on this machine in APEX_GCS_Saved, and nothing about a
-    mission should stop because a backup did.
-    """
     import widgets.firebase_backend as fb
     session = fb.current_session()
     if not session:
+        # Not signed in yet, or the session expired. Worth retrying later.
+        _enqueue(local_path, subfolder)
         return False
+
     try:
         return fb.upload_backup(session, local_path, subfolder)
     except fb.AuthError as exc:
         if getattr(exc, "full", False):
+            # Retrying a full allowance just fails again every minute, so this
+            # one is reported and dropped rather than queued.
             print("[Backup] allowance full, not uploading '" + local_path + "'")
-        else:
-            print("[Backup] " + str(exc))
+            return False
+        print("[Backup] " + str(exc))
+        _enqueue(local_path, subfolder)
         return False
     except Exception as exc:
         print("[Backup] unexpected error for '" + local_path + "': " + str(exc))
+        _enqueue(local_path, subfolder)
         return False
 
 
@@ -230,35 +98,41 @@ def _queue_worker():
         q = _load_queue()
         if not q:
             continue
-        still_pending = []
+        # upload_file re-queues its own failures, so the queue is cleared first
+        # and rebuilt from what did not get through.
+        _save_queue([])
         for item in q:
-            ok = upload_file(item["email"], item["path"], item.get("sub", "files"))
-            if not ok:
-                still_pending.append(item)
-        _save_queue(still_pending)
+            path = item.get("path", "")
+            if not os.path.isfile(path):
+                continue            # deleted since; nothing left to back up
+            upload_file("", path, item.get("sub", "files"))
 
 _worker_thread = threading.Thread(target=_queue_worker, daemon=True)
 _worker_thread.start()
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Welcome email
-# ══════════════════════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Accounts, OTP and passwords moved to widgets/firebase_backend.py
+#  What used to be here
 # ─────────────────────────────────────────────────────────────────────────────
-# What used to live below this line: _send_welcome_email, send_otp, login,
-# email_exists, signup, get_user_info, _get_active_users_sheet,
-# log_user_login, log_user_logout and reset_password.
+# Accounts, OTP and passwords moved to widgets/firebase_backend.py:
+# _send_welcome_email, send_otp, login, email_exists, signup, get_user_info,
+# _get_active_users_sheet, log_user_login, log_user_logout, reset_password.
 #
 # All of it read and wrote a Google Sheet and sent mail through smtp.gmail.com
-# using a sender address and app password compiled into this file — and so
-# into every .exe ever shipped, where both were trivially extractable. Firebase
-# Auth replaces the accounts, and Firebase sends the verification and
-# password-reset mail itself, so no mail credential exists in the build.
+# using a sender address and app password compiled into this file — and so into
+# every .exe ever shipped, where both were trivially extractable. Firebase Auth
+# replaces the accounts, and Firebase sends the verification and password-reset
+# mail itself, so no mail credential exists in the build.
 #
-# No Google Sheet is read or written by APEX GCS any more. Existing sheets were
-# left exactly as they are; nothing was migrated out of them.
+# Google Drive backup has gone too: _get_drive, DRIVE_ROOT_FOLDER_ID,
+# _find_folder, _create_folder, _get_or_create_folder, _share_folder,
+# create_user_drive_folder, get_user_drive_url, _guess_mime and the
+# APEX_BACKUP mode switch. Every upload landed in one APEX-owned Drive account
+# through a token sitting in the build, which gave anyone who unpacked the exe
+# full read and write access to every customer's backups. Firebase Cloud
+# Storage replaces it: each customer writes only to their own folder, through a
+# one-time signed URL the gcsApi function issues against their own login, so no
+# credential ships at all. Files already in Drive were left exactly where they
+# are; nothing was migrated out.
 #
-# This module now does one thing: Google Drive backup of captured images,
-# detection results and mission files, which is unrelated to accounts.
+# No Google Sheet is read or written by APEX GCS any more.

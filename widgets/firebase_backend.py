@@ -536,6 +536,43 @@ def list_backups(session: dict, limit: int = 200) -> list:
     return _gcs_api(session, "listBackups", limit=limit).get("files") or []
 
 
+def delete_backups(session: dict, paths: list) -> dict:
+    """
+    Delete the given backed-up files and give the allowance back.
+
+    `paths` are the object paths returned by list_backups. The server checks
+    each one belongs to the caller, so a wrong path is refused rather than
+    acted on. Returns {deleted, freedBytes, failed, quota}.
+    """
+    paths = [str(p) for p in (paths or []) if p]
+    if not paths:
+        return {"deleted": 0, "freedBytes": 0, "failed": 0}
+    return _gcs_api(session, "deleteBackups", paths=paths)
+
+
+def download_backup(session: dict, url: str, dest_path: str) -> bool:
+    """
+    Fetch one backed-up file to `dest_path`.
+
+    `url` is the signed read link list_backups already handed out, so this
+    needs no token of its own. Streams, because an xlsx can be 10 MB.
+    """
+    try:
+        with requests.get(url, stream=True, timeout=STORAGE_TIMEOUT) as r:
+            if r.status_code >= 400:
+                print("[Backup] download refused: " + str(r.status_code))
+                return False
+            os.makedirs(os.path.dirname(dest_path) or ".", exist_ok=True)
+            with open(dest_path, "wb") as f:
+                for chunk in r.iter_content(64 * 1024):
+                    if chunk:
+                        f.write(chunk)
+    except (requests.RequestException, OSError) as exc:
+        print("[Backup] download failed for '" + dest_path + "': " + str(exc))
+        return False
+    return True
+
+
 def upload_backup(session: dict, local_path: str, subfolder: str = "files") -> bool:
     """
     Back one file up. Returns True on success.

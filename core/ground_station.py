@@ -707,7 +707,7 @@ class GroundStation(QtWidgets.QMainWindow):
         print("Image saved:", path)
         self._display_image(image_bytes, cubesat_id)
 
-        # ── Auto-backup to Google Drive ───────────────────────────────────────
+        # ── Auto-backup to the customer's APEX backup ──────────────────────────
         if self.user_email:
             import widgets.auth_backend as auth
             threading.Thread(

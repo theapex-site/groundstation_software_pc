@@ -1039,7 +1039,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
                 _t.Thread(target=auth.upload_file, args=(self._user_email, img_path, "object detection"), daemon=True).start()
                 _t.Thread(target=auth.upload_file, args=(self._user_email, txt_path, "object detection"), daemon=True).start()
         except Exception as _ue:
-            print(f"[Drive] object detection upload error: {_ue}")
+            print(f"[Backup] object detection upload error: {_ue}")
 
         self._bottom_lbl.setText(f"Saved → {img_path}")
         ThemedMessageBox.information(

@@ -16,8 +16,6 @@ _cv_d,  _cv_b,  _cv_h  = collect_all('cv2')
 added_files = [
     ("images",                      "images"),
     ("models",                      "models"),
-    ("widgets/drive_oauth.json",    "widgets"),
-    ("widgets/drive_token.pickle",  "widgets"),
 ]
 
 a = Analysis(
@@ -63,18 +61,6 @@ a = Analysis(
             "struct",
             "pickle",
             "webbrowser",
-
-            "googleapiclient",
-            "googleapiclient.discovery",
-            "googleapiclient.http",
-
-            "google.auth",
-            "google.auth.transport.requests",
-
-            "google_auth_oauthlib",
-            "google_auth_oauthlib.flow",
-
-            "httplib2",
 
             "requests",
 
