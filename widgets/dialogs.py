@@ -28,6 +28,10 @@ _BORDER   = "#1e293b"
 _ACCENT   = "#38bdf8"
 _TEXT     = "#e2e8f0"
 _MUTED    = "#94a3b8"
+
+# Where "Need Help?" writes to. Same address as the support button in the
+# licence email.
+SUPPORT_EMAIL = "support@theapex.site"
 _GREEN    = "#22c55e"
 _YELLOW   = "#facc15"
 _RED      = "#ef4444"
@@ -2163,7 +2167,25 @@ class UserProfileDialog(QtWidgets.QDialog):
         """)
         logout_btn.clicked.connect(self._do_logout)
 
+        help_btn = QtWidgets.QPushButton("?  Need Help?")
+        help_btn.setMinimumHeight(34)
+        help_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {_SURFACE};
+                color: {_TEXT};
+                border: 1px solid {_BORDER};
+                border-radius: 5px;
+                font-size: 12px;
+            }}
+            QPushButton:hover {{
+                border-color: {_ACCENT};
+                color: {_ACCENT};
+            }}
+        """)
+        help_btn.clicked.connect(self._open_support)
+
         btn_row.addWidget(self._backups_btn, 1)
+        btn_row.addWidget(help_btn, 1)
         btn_row.addWidget(logout_btn, 1)
         root.addLayout(btn_row)
 
@@ -2279,6 +2301,33 @@ class UserProfileDialog(QtWidgets.QDialog):
         hour, and lets them download or delete what they choose.
         """
         _MyBackupsDialog(self).exec_()
+
+    def _open_support(self):
+        """
+        Open Gmail's compose window addressed to APEX support.
+
+        Gmail's web compose rather than mailto:, which hands off to whatever
+        desktop mail client happens to be registered — often none at all, in
+        which case clicking appears to do nothing. Matches the support button
+        in the licence email.
+        """
+        body = (
+            "Describe the problem here.\n\n"
+            "----------------------------------------\n"
+            "Account: " + (self._email or "unknown") + "\n"
+        )
+        url = (
+            "https://mail.google.com/mail/?view=cm&fs=1"
+            "&to=" + QtCore.QUrl.toPercentEncoding(SUPPORT_EMAIL).data().decode()
+            + "&su=" + QtCore.QUrl.toPercentEncoding("APEX GCS support").data().decode()
+            + "&body=" + QtCore.QUrl.toPercentEncoding(body).data().decode()
+        )
+        if not QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)):
+            # No browser could be launched, so give them the address to use.
+            ThemedMessageBox.information(
+                self, "Need Help?",
+                "Email " + SUPPORT_EMAIL,
+                "A browser could not be opened automatically.")
 
     def _do_logout(self):
         reply = ThemedMessageBox.question(
