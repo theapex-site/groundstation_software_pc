@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import datetime
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -1000,8 +1001,20 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         os.makedirs(DETECT_DIR, exist_ok=True)
 
         # Build stem from source image name (preserves IMG_ naming)
+        # Detection output always carries the same IMG_<date>_<time> shape as a
+        # camera downlink, whatever was fed in. A run on an uploaded file used
+        # to inherit that file's name, producing things like images_detect.jpg,
+        # which made the saved set inconsistent and left the backup service
+        # unable to tell APEX output from anything else by name alone.
+        #
+        # A downlink's own stem is reused where there is one, so the result
+        # still pairs obviously with the image it came from; anything else gets
+        # the current time.
         src_stem = Path(self._img_path).stem
-        stem     = f"{src_stem}_detect"
+        if re.fullmatch(r"IMG_\d{8}_\d{6}", src_stem):
+            stem = f"{src_stem}_detect"
+        else:
+            stem = datetime.datetime.now().strftime("IMG_%Y%m%d_%H%M%S") + "_detect"
 
         img_path = os.path.join(DETECT_DIR, f"{stem}.jpg")
         txt_path = os.path.join(DETECT_DIR, f"{stem}.txt")
