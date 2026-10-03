@@ -1669,6 +1669,131 @@ class ThemedMessageBox(QtWidgets.QDialog):
 # ══════════════════════════════════════════════════════════════════════════════
 #  UserProfileDialog   ← opened by the ⚙ button in TelemetryPanel
 # ══════════════════════════════════════════════════════════════════════════════
+class _MyBackupsDialog(QtWidgets.QDialog):
+    """
+    What is actually in the customer's Firebase Storage backup.
+
+    Replaces the old "Open Backup" link to a shared Google Drive folder. That
+    folder lived in one APEX-owned Drive account, reachable with a token that
+    shipped inside every build; this reads only the signed-in customer's own
+    files, through links the server mints on request and which expire in an
+    hour.
+    """
+
+    _loaded = QtCore.pyqtSignal(object, object)     # (files, error)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("APEX GCS — My Backups")
+        self.setMinimumSize(640, 420)
+        self.setModal(True)
+        self.setStyleSheet(_BASE_STYLE)
+        self._files = []
+        self._build()
+        self._loaded.connect(self._on_loaded)
+        self._load()
+
+    def _build(self):
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setContentsMargins(20, 18, 20, 18)
+        lay.setSpacing(10)
+
+        title = QtWidgets.QLabel("My Backups")
+        title.setStyleSheet(f"color:{_ACCENT}; font-size:18px; font-weight:bold;")
+        lay.addWidget(title)
+
+        self._subtitle = QtWidgets.QLabel("Loading…")
+        self._subtitle.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        lay.addWidget(self._subtitle)
+
+        self._table = QtWidgets.QTableWidget(0, 4)
+        self._table.setHorizontalHeaderLabels(["File", "Folder", "Size", "Backed up"])
+        self._table.verticalHeader().setVisible(False)
+        self._table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
+        self._table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
+        self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setColumnWidth(0, 280)
+        self._table.setColumnWidth(1, 130)
+        self._table.setColumnWidth(2, 80)
+        self._table.setStyleSheet(f"""
+            QTableWidget {{ background:{_BG}; color:{_TEXT}; gridline-color:{_BORDER};
+                            border:1px solid {_BORDER}; border-radius:6px; font-size:11px; }}
+            QHeaderView::section {{ background:{_SURFACE}; color:{_MUTED}; border:none;
+                                    padding:6px; font-size:10px; }}
+            QTableWidget::item:selected {{ background:{_ACCENT}; color:{_BG}; }}
+        """)
+        self._table.doubleClicked.connect(self._open_selected)
+        lay.addWidget(self._table, 1)
+
+        row = QtWidgets.QHBoxLayout()
+        self._open_btn = QtWidgets.QPushButton("Open")
+        self._open_btn.clicked.connect(self._open_selected)
+        self._open_btn.setEnabled(False)
+        row.addWidget(self._open_btn)
+        refresh = QtWidgets.QPushButton("Refresh")
+        refresh.clicked.connect(self._load)
+        row.addWidget(refresh)
+        row.addStretch()
+        close = QtWidgets.QPushButton("Close")
+        close.clicked.connect(self.accept)
+        row.addWidget(close)
+        lay.addLayout(row)
+
+        self._table.itemSelectionChanged.connect(
+            lambda: self._open_btn.setEnabled(bool(self._table.selectedItems())))
+
+    def _load(self):
+        self._subtitle.setText("Loading…")
+        self._table.setRowCount(0)
+
+        def worker():
+            session = fb.current_session()
+            if not session:
+                self._loaded.emit(None, "Not signed in.")
+                return
+            try:
+                self._loaded.emit(fb.list_backups(session), None)
+            except Exception as exc:
+                self._loaded.emit(None, str(exc))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    @QtCore.pyqtSlot(object, object)
+    def _on_loaded(self, files, error):
+        if error:
+            self._subtitle.setText(error)
+            return
+        self._files = files or []
+        if not self._files:
+            self._subtitle.setText(
+                "Nothing backed up yet. Images and reports are uploaded "
+                "automatically as they are produced.")
+            return
+        total = sum(int(f.get("size") or 0) for f in self._files)
+        n = len(self._files)
+        self._subtitle.setText(
+            "{} {}, {}. Double-click one to open it.".format(
+                n, "file" if n == 1 else "files", fb.human_bytes(total)))
+        self._table.setRowCount(len(self._files))
+        for r, f in enumerate(self._files):
+            when = str(f.get("uploadedAt") or "")[:16].replace("T", " ")
+            for c, v in enumerate([f.get("name", ""), f.get("folder", ""),
+                                   fb.human_bytes(f.get("size")), when]):
+                self._table.setItem(r, c, QtWidgets.QTableWidgetItem(str(v)))
+
+    def _open_selected(self):
+        rows = {i.row() for i in self._table.selectedItems()}
+        if not rows:
+            return
+        f = self._files[sorted(rows)[0]]
+        url = f.get("url")
+        if url:
+            QtGui.QDesktopServices.openUrl(QtCore.QUrl(url))
+        else:
+            ThemedMessageBox.warning(self, "Unavailable",
+                                     "That file has no download link right now.")
+
+
 class UserProfileDialog(QtWidgets.QDialog):
     """
     Shows the logged-in user's profile info, a Logout button, and a
@@ -1824,7 +1949,7 @@ class UserProfileDialog(QtWidgets.QDialog):
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.setSpacing(10)
 
-        self._drive_btn = QtWidgets.QPushButton("🗂  Open Backup")
+        self._drive_btn = QtWidgets.QPushButton("🗂  My Backups")
         self._drive_btn.setMinimumHeight(34)
         self._drive_btn.setEnabled(True)   # always enabled — fallback URL used if fetch not done yet
         self._drive_btn.setStyleSheet(f"""
@@ -1937,15 +2062,33 @@ class UserProfileDialog(QtWidgets.QDialog):
 
     @QtCore.pyqtSlot(object, object)
     def _on_profile_loaded(self, info, url):
-        if info:
-            # Build a case-insensitive lookup so sheet header casing doesn't matter
+        if info is None:
+            self._status_lbl.setText("⚠  Could not load your details (offline?)")
+            self._status_lbl.show()
+        else:
+            # Labels read as headings ("Institution") while Firestore stores
+            # them lower-cased, so matching is case-insensitive.
             info_lower = {k.lower(): v for k, v in info.items()}
+            filled = 0
             for key, lbl in self._value_labels.items():
                 val = str(info.get(key) or info_lower.get(key.lower(), "")).strip()
+                if key == "Email" and not val:
+                    val = self._email
                 lbl.setText(val if val else "—")
-            self._status_lbl.hide()
-        else:
-            self._status_lbl.setText("⚠  Could not load profile (offline?)")
+                if val:
+                    filled += 1
+
+            if filled <= 1:
+                # Only the email resolved, so the account exists but its
+                # details were never written. That is what happens when a
+                # licence was activated through the re-entry screen, which
+                # stores only the key. Saying so beats seven silent dashes.
+                self._status_lbl.setText(
+                    "Your details were not saved with this account. "
+                    "Contact APEX and they can add them.")
+                self._status_lbl.show()
+            else:
+                self._status_lbl.hide()
 
         if url:
             self._drive_url = url
@@ -1953,15 +2096,15 @@ class UserProfileDialog(QtWidgets.QDialog):
 
     # ── Actions ───────────────────────────────────────────────────────────────
     def _open_drive(self):
-        # Open the user's personal backup folder in APEX_GCS_Users
-        if self._drive_url:
-            QtGui.QDesktopServices.openUrl(QtCore.QUrl(self._drive_url))
-        else:
-            QtWidgets.QMessageBox.information(
-                self, "Backup Folder",
-                "Your backup folder is being set up or could not be reached.\n"
-                "Please try again in a moment."
-            )
+        """
+        Show what is in Firebase Storage.
+
+        Was a link to a shared Google Drive folder, reachable only with a token
+        that shipped inside every build. Now lists the signed-in customer's own
+        files, through links the server mints on request and which expire in an
+        hour.
+        """
+        _MyBackupsDialog(self).exec_()
 
     def _do_logout(self):
         reply = ThemedMessageBox.question(
