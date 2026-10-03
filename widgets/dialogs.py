@@ -1819,7 +1819,6 @@ class UserProfileDialog(QtWidgets.QDialog):
     def __init__(self, email: str, parent=None):
         super().__init__(parent)
         self._email = email
-        self._drive_url = None
 
         self.setWindowTitle("User Profile")
         self.setFixedSize(420, 520)
@@ -2005,6 +2004,14 @@ class UserProfileDialog(QtWidgets.QDialog):
         self._quota_ready.connect(self._on_quota_loaded)
 
         def worker():
+            # One Firestore read, emitted immediately, so the card fills as
+            # soon as it possibly can.
+            #
+            # This used to wait on auth.get_user_drive_url() first, which is
+            # six Google Drive round-trips (build the service, find-or-create
+            # the user's folder, three subfolders, then a share call) before a
+            # single field appeared. The URL it returned is no longer used for
+            # anything: the button opens My Backups now, from Firebase Storage.
             info = None
             session = fb.current_session()
             if session:
@@ -2012,12 +2019,10 @@ class UserProfileDialog(QtWidgets.QDialog):
                     info = fb.fetch_profile(fb.ensure_fresh(session))
                 except fb.AuthError:
                     info = None
-            url = auth.get_user_drive_url(self._email)
-            self._profile_ready.emit(info, url)
+            self._profile_ready.emit(info, None)
 
-            # Separate call, and deliberately after the profile: the backup
-            # service is a different endpoint and should not hold up the rest
-            # of the dialog if it is slow or unreachable.
+            # Separate, and after, because the backup service is a different
+            # endpoint and a cold start there should not hold up the details.
             quota = None
             if session:
                 try:
@@ -2090,9 +2095,6 @@ class UserProfileDialog(QtWidgets.QDialog):
             else:
                 self._status_lbl.hide()
 
-        if url:
-            self._drive_url = url
-            self._drive_btn.setEnabled(True)
 
     # ── Actions ───────────────────────────────────────────────────────────────
     def _open_drive(self):
