@@ -117,7 +117,12 @@ exe = EXE(
     pyz,
     a.scripts,
     [],
-    exclude_binaries=False,
+    # True because this is a one-folder build: the binaries belong to COLLECT
+    # below. With False, PyInstaller also wrote a self-contained-looking
+    # APEX_GCS.exe straight into dist\ whose DLLs were never beside it, so
+    # running that one died with "Error loading Python DLL python311.dll".
+    # The real executable is dist\APEX_GCS\APEX_GCS.exe.
+    exclude_binaries=True,
     name="APEX_GCS",
     debug=False,
     bootloader_ignore_signals=False,
