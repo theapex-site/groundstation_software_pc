@@ -17,7 +17,7 @@ import serial.tools.list_ports
 import tempfile, os
 from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
-from config import APEX_LOGO, BG_IMAGE, title
+from config import APEX_LOGO, title
 import widgets.auth_backend as auth
 import widgets.firebase_backend as fb
 
@@ -1313,23 +1313,17 @@ class LoginWindow(QtWidgets.QDialog):
         left.setScaledContents(False)
         left.setAlignment(QtCore.Qt.AlignCenter)
 
-        # Background image
-        bg_pix = QtGui.QPixmap(BG_IMAGE)
-        if not bg_pix.isNull():
-            bg_pix = bg_pix.scaled(
-                340, 580,
-                QtCore.Qt.KeepAspectRatioByExpanding,
-                QtCore.Qt.SmoothTransformation)
-            # Crop to exact size
-            x_off = max(0, (bg_pix.width()  - 340) // 2)   # ← still 340, wrong
-            y_off = max(0, (bg_pix.height() - 580) // 2)   # ← still 580, wrong
-            bg_pix = bg_pix.copy(x_off, y_off, 340, 580)
-            left.setPixmap(bg_pix)
+        # The same starfield the main window and the website use, drawn at the
+        # panel's exact size. Was images/BG1.jpg scaled and centre-cropped,
+        # which never matched the site.
+        from widgets.space_bg import backdrop
+        left.setPixmap(backdrop(340, 580))
 
         # Overlay container (title top, logo below it)
         left_overlay = QtWidgets.QWidget(left)
         left_overlay.setGeometry(0, 0, 340, 580)
-        left_overlay.setStyleSheet("background: rgba(2,6,23,0.60);")
+        # Light, because the starfield underneath is the point now.
+        left_overlay.setStyleSheet("background: rgba(0,0,0,0.35);")
         ov_lay = QtWidgets.QVBoxLayout(left_overlay)
         ov_lay.setContentsMargins(12, 20, 12, 16)
         ov_lay.setSpacing(0)

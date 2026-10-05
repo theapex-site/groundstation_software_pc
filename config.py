@@ -19,7 +19,8 @@ def resource_path(relative_path):
 IMAGES_DIR = resource_path("images")
 
 APEX_LOGO  = os.path.join(IMAGES_DIR, "Apex Logo.png")
-BG_IMAGE   = os.path.join(IMAGES_DIR, "BG1.jpg")
+# BG1.jpg is no longer used: widgets/space_bg.py generates the website's
+# starfield instead. The file is left in images/ for now rather than deleted.
 title      = os.path.join(IMAGES_DIR, "GCS_img.png")
 
 
@@ -48,9 +49,13 @@ DEFAULT_LON = 77.514813
 
 # ── Qt stylesheet ─────────────────────────────────────────────────────────────
 STYLE = """
-QMainWindow { background-color: #000000; color: #f5f0e6; font-family: Consolas; }
+QMainWindow { background: transparent; color: #f5f0e6; font-family: Consolas; }
 
-#TelemetryPanel { border:1px solid #1a1a2e; border-radius:10px; }
+#TelemetryPanel {
+    border:1px solid #1a1a2e;
+    border-radius:10px;
+    background: rgba(8,8,15,0.78);
+}
 
 #mainTitle {
     color:#2dd4bf;
@@ -62,7 +67,7 @@ QMainWindow { background-color: #000000; color: #f5f0e6; font-family: Consolas; 
 #groupBox {
     border:1px solid #1a1a2e;
     border-radius:8px;
-    background:#000000;
+    background: rgba(13,13,24,0.72);
     margin-top:8px;
     padding:6px;
     color:#5eead4;
@@ -73,7 +78,7 @@ QMainWindow { background-color: #000000; color: #f5f0e6; font-family: Consolas; 
 #valueLabel { color:#f5f0e6; font-size:12px; font-weight:bold; }
 
 QTextEdit {
-    background:#000;
+    background: rgba(0,0,0,0.80);
     color:#22c55e;
     border:1px solid #1a1a2e;
     font-size:11px;

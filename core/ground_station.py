@@ -66,10 +66,11 @@ class GroundStation(QtWidgets.QMainWindow):
         self.setWindowTitle("APEX Ground Control Station")
         self.resize(1900, 1080)
 
-        # ── Background image ──────────────────────────────────────────────────
-        self.bg_pixmap = QtGui.QPixmap(
-            os.path.join(BASE_PATH, "images", "BG1.jpg")
-        )
+        # ── Background ────────────────────────────────────────────────────────
+        # Drawn in paintEvent from widgets/space_bg, which reproduces the
+        # website's starfield. Was images/BG1.jpg, a stock space photo that did
+        # not match the site.
+        self.bg_pixmap = QtGui.QPixmap()      # kept: paintEvent still checks it
 
         # ── Mission log (Excel) ───────────────────────────────────────────────
         self._init_mission_log()
@@ -853,13 +854,10 @@ class GroundStation(QtWidgets.QMainWindow):
 
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
-        if not self.bg_pixmap.isNull():
-            scaled = self.bg_pixmap.scaled(
-                self.size(),
-                QtCore.Qt.KeepAspectRatioByExpanding,
-                QtCore.Qt.SmoothTransformation,
-            )
-            painter.drawPixmap(0, 0, scaled)
+        # Generated at the exact window size, so the nebulae sit where the
+        # website puts them instead of being cropped by an aspect-fill scale.
+        from widgets.space_bg import backdrop
+        painter.drawPixmap(0, 0, backdrop(self.width(), self.height()))
 
     def closeEvent(self, event):
             has_data = (
