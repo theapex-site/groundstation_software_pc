@@ -22,11 +22,15 @@ import widgets.auth_backend as auth
 import widgets.firebase_backend as fb
 
 # ── Shared GCS palette (keep in sync with config.py STYLE) ───────────────────
-_BG       = "#020617"
-_SURFACE  = "#0f172a"
-_BORDER   = "#1e293b"
-_ACCENT   = "#38bdf8"
-_TEXT     = "#e2e8f0"
+# Matches theapex.site: css/style.css --navy-deep, --navy-panel, --navy-line,
+# --cream, --slate and --teal. Status colours further down are deliberately
+# NOT from the site palette: a coloured telemetry value has to mean something,
+# so green/amber/red stay semantic rather than being rebranded.
+_BG       = "#000000"
+_SURFACE  = "#08080f"
+_BORDER   = "#1a1a2e"
+_ACCENT   = "#2dd4bf"
+_TEXT     = "#f5f0e6"
 _MUTED    = "#94a3b8"
 
 # Where "Need Help?" writes to. Same address as the support button in the
@@ -156,14 +160,14 @@ _BASE_STYLE = f"""
     QLineEdit {{
         background: {_SURFACE};
         color: {_TEXT};
-        border: 1.5px solid #2d4a5a;
+        border: 1.5px solid #1a1a2e;
         border-radius: 5px;
         padding: 6px 10px;
         font-size: 15px;
     }}
     QLineEdit:focus {{
-        border: 2px solid #4a7a96;
-        background: #0f2133;
+        border: 2px solid #2dd4bf;
+        background: #0d0d18;
     }}
 """
 
@@ -332,8 +336,8 @@ class _ReauthPage(QtWidgets.QWidget):
                 background:{_ACCENT}; color:{_BG}; border:none; border-radius:6px;
                 padding:10px; font-size:13px; font-weight:bold;
             }}
-            QPushButton:hover {{ background:#7dd3fc; }}
-            QPushButton:disabled {{ background:#1e293b; color:#475569; }}
+            QPushButton:hover {{ background:#5eead4; }}
+            QPushButton:disabled {{ background:#1a1a2e; color:#475569; }}
         """)
         self.auth_btn.clicked.connect(self._do_auth)
         lay.addWidget(self.auth_btn)
@@ -547,7 +551,7 @@ class _LoginPage(QtWidgets.QWidget):
                 border: none; border-radius: 5px;
                 font-size: 13px; font-weight: bold;
             }}
-            QPushButton:hover {{ background: #7dd3fc; }}
+            QPushButton:hover {{ background: #5eead4; }}
         """)
         sign_in_btn.clicked.connect(self._do_login)
         lay.addWidget(sign_in_btn)
@@ -785,7 +789,7 @@ class TermsDialog(QtWidgets.QDialog):
                 border: none; border-radius: 5px;
                 font-size: 12px; font-weight: bold;
             }}
-            QPushButton:hover {{ background: #7dd3fc; }}
+            QPushButton:hover {{ background: #5eead4; }}
         """)
         ok_btn.clicked.connect(self.accept)
         lay.addWidget(ok_btn)
@@ -819,15 +823,15 @@ class _SignUpPage(QtWidgets.QWidget):
             QLineEdit {{
                 background: {_SURFACE};
                 color: {_TEXT};
-                border: 1.5px solid #2d4a5a;
+                border: 1.5px solid #1a1a2e;
                 border-radius: 5px;
                 padding: 6px 10px;
                 font-size: 12px;
                 font-family: Consolas;
             }}
             QLineEdit:focus {{
-                border: 2px solid #4a7a96;
-                background: #0f2133;
+                border: 2px solid #2dd4bf;
+                background: #0d0d18;
             }}
         """)
         lay = QtWidgets.QVBoxLayout(inner_widget)
@@ -868,15 +872,15 @@ class _SignUpPage(QtWidgets.QWidget):
             QComboBox {{
                 background: {_SURFACE};
                 color: {_TEXT};
-                border: 1.5px solid #2d4a5a;
+                border: 1.5px solid #1a1a2e;
                 border-radius: 5px;
                 padding: 6px 10px;
                 font-size: 14px;
                 font-family: Consolas;
             }}
             QComboBox:focus {{
-                border: 2px solid #4a7a96;
-                background: #0f2133;
+                border: 2px solid #2dd4bf;
+                background: #0d0d18;
             }}
             QComboBox QAbstractItemView {{
                 background: {_SURFACE};
@@ -955,7 +959,7 @@ class _SignUpPage(QtWidgets.QWidget):
                 background: transparent;
                 min-width: 0px;
             }}
-            QPushButton:hover {{ color: #7dd3fc; }}
+            QPushButton:hover {{ color: #5eead4; }}
         """)
         terms_link.clicked.connect(self._show_terms)
         terms_row.addWidget(terms_link)
@@ -974,7 +978,7 @@ class _SignUpPage(QtWidgets.QWidget):
                 border: none; border-radius: 5px;
                 font-size: 13px; font-weight: bold;
             }}
-            QPushButton:hover {{ background: #7dd3fc; }}
+            QPushButton:hover {{ background: #5eead4; }}
             QPushButton:disabled {{
                 background: {_BORDER}; color: {_MUTED};
             }}
@@ -1165,7 +1169,7 @@ class _ComPortPage(QtWidgets.QWidget):
                 border-radius: 5px; font-size: 12px;
                 font-weight: bold; min-width: 80px;
             }}
-            QPushButton:hover {{ background: #7dd3fc; }}
+            QPushButton:hover {{ background: #5eead4; }}
         """)
         refresh_btn.clicked.connect(self._refresh)
         connect_btn.clicked.connect(self._connect)
@@ -1513,7 +1517,7 @@ class ComPortSelector(QtWidgets.QDialog):
                 min-width: 80px;
             }}
             QPushButton:hover {{
-                background: #7dd3fc;
+                background: #5eead4;
             }}
         """)
 

@@ -58,14 +58,14 @@ class MiniGraph(QtWidgets.QWidget):
         bg_path = QtGui.QPainterPath()
         bg_path.addRoundedRect(rect, 15, 15)
         painter.fillPath(bg_path, QtGui.QColor("#000000"))
-        pen = QtGui.QPen(QtGui.QColor("#1e293b"))
+        pen = QtGui.QPen(QtGui.QColor("#1a1a2e"))
         pen.setWidth(2)
         painter.setPen(pen)
         painter.drawPath(bg_path)
         painter.setClipPath(bg_path)
 
         # Title
-        painter.setPen(QtGui.QColor("#7dd3fc"))
+        painter.setPen(QtGui.QColor("#5eead4"))
         painter.drawText(12, 20, self.title)
 
         if len(self.data) < 2:
@@ -82,7 +82,7 @@ class MiniGraph(QtWidgets.QWidget):
         val_range = max_val - min_val or 1
 
         # Grid
-        grid_pen = QtGui.QPen(QtGui.QColor("#1e293b"))
+        grid_pen = QtGui.QPen(QtGui.QColor("#1a1a2e"))
         grid_pen.setStyle(QtCore.Qt.DashLine)
         painter.setPen(grid_pen)
         for i in range(5):
@@ -97,7 +97,7 @@ class MiniGraph(QtWidgets.QWidget):
         painter.drawText(int(x_pos), int(top_margin + h + 15), text)
 
         # Line
-        line_pen = QtGui.QPen(QtGui.QColor("#38bdf8"))
+        line_pen = QtGui.QPen(QtGui.QColor("#2dd4bf"))
         line_pen.setWidth(2)
         painter.setPen(line_pen)
         step = (w - 5) / (len(self.data) - 1)
@@ -168,13 +168,13 @@ class PopupGraph(MiniGraph):
         bg_path = QtGui.QPainterPath()
         bg_path.addRoundedRect(rect, 15, 15)
         painter.fillPath(bg_path, QtGui.QColor("#000000"))
-        pen = QtGui.QPen(QtGui.QColor("#1e293b"))
+        pen = QtGui.QPen(QtGui.QColor("#1a1a2e"))
         pen.setWidth(2)
         painter.setPen(pen)
         painter.drawPath(bg_path)
         painter.setClipPath(bg_path)
 
-        painter.setPen(QtGui.QColor("#7dd3fc"))
+        painter.setPen(QtGui.QColor("#5eead4"))
         painter.drawText(12, 20, self.title)
 
         if len(self.data) < 2:
@@ -215,7 +215,7 @@ class PopupGraph(MiniGraph):
             painter.drawText(int(x - 10), int(tm + h + 20), str(idx))
 
         # Axis labels
-        painter.setPen(QtGui.QColor("#7dd3fc"))
+        painter.setPen(QtGui.QColor("#5eead4"))
         painter.drawText(int(lm + w / 2 - 30), int(tm + h + 40), "Time (samples)")
         painter.save()
         painter.translate(20, int(tm + h / 2 + 40))
@@ -232,7 +232,7 @@ class PopupGraph(MiniGraph):
             painter.drawLine(lm, int(y), int(lm + w), int(y))
 
         # Line
-        line_pen = QtGui.QPen(QtGui.QColor("#38bdf8"))
+        line_pen = QtGui.QPen(QtGui.QColor("#2dd4bf"))
         line_pen.setWidth(2)
         painter.setPen(line_pen)
         step = w / (len(self.data) - 1)
@@ -264,7 +264,7 @@ class PopupGraph(MiniGraph):
             painter.setPen(mk_pen)
             painter.drawPoint(int(x), int(y))
 
-            painter.setPen(QtGui.QColor("#e2e8f0"))
+            painter.setPen(QtGui.QColor("#f5f0e6"))
             painter.drawText(int(x + 12), int(y - 20), f"Time : {self.hover_time}")
             val_str = f"Value: {round(self.hover_value, 2)}"
             if self.unit:
@@ -280,11 +280,11 @@ class GraphPopup(QtWidgets.QMainWindow):
 
     _STYLE = """
         QMainWindow {
-            background-color: #020617;
+            background-color: #000000;
         }
         QStatusBar {
-            background-color: #020617;
-            color: #38bdf8;
+            background-color: #000000;
+            color: #2dd4bf;
             font-family: Consolas;
             font-size: 11px;
         }

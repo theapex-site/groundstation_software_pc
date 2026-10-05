@@ -48,67 +48,67 @@ DEFAULT_LON = 77.514813
 
 # ── Qt stylesheet ─────────────────────────────────────────────────────────────
 STYLE = """
-QMainWindow { background-color: #020617; color: #e2e8f0; font-family: Consolas; }
+QMainWindow { background-color: #000000; color: #f5f0e6; font-family: Consolas; }
 
-#TelemetryPanel { border:1px solid #1e293b; border-radius:10px; }
+#TelemetryPanel { border:1px solid #1a1a2e; border-radius:10px; }
 
 #mainTitle {
-    color:#38bdf8;
+    color:#2dd4bf;
     font-size:20px;
     font-weight:bold;
     padding:6px;
 }
 
 #groupBox {
-    border:1px solid #1e293b;
+    border:1px solid #1a1a2e;
     border-radius:8px;
-    background:#020617;
+    background:#000000;
     margin-top:8px;
     padding:6px;
-    color:#7dd3fc;
+    color:#5eead4;
     font-weight:bold;
 }
 
 #nameLabel { color:#94a3b8; font-size:12px; }
-#valueLabel { color:#e2e8f0; font-size:12px; font-weight:bold; }
+#valueLabel { color:#f5f0e6; font-size:12px; font-weight:bold; }
 
 QTextEdit {
     background:#000;
     color:#22c55e;
-    border:1px solid #1e293b;
+    border:1px solid #1a1a2e;
     font-size:11px;
 }
 
 QPushButton {
-    background:#1e293b;
-    color:#38bdf8;
-    border:1px solid #38bdf8;
+    background:#1a1a2e;
+    color:#2dd4bf;
+    border:1px solid #2dd4bf;
     padding:5px;
     border-radius:5px;
 }
 QPushButton:hover {
-    background:#38bdf8;
-    color:#020617;
+    background:#2dd4bf;
+    color:#000000;
 }
 
 QProgressBar {
-    border: 1px solid #1e293b;
+    border: 1px solid #1a1a2e;
     border-radius: 6px;
     text-align: center;
-    background-color: #0f172a;
-    color: #e2e8f0;
+    background-color: #08080f;
+    color: #f5f0e6;
     height: 18px;
     font-size: 11px;
 }
 QProgressBar::chunk {
-    background-color: #38bdf8;
+    background-color: #2dd4bf;
     border-radius: 6px;
 }
 
 QToolTip {
-    background-color: #020617;
-    color: #38bdf8;
-    border: 1px solid #38bdf8;
+    background-color: #000000;
+    color: #2dd4bf;
+    border: 1px solid #2dd4bf;
     padding: 4px;
     font-size: 11px;
 }

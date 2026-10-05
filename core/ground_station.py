@@ -159,7 +159,7 @@ class GroundStation(QtWidgets.QMainWindow):
         # COM label
         self.com_label = QtWidgets.QLabel(f"COM: {self.com_port}")
         self.com_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.com_label.setStyleSheet("color:#38bdf8; font-size:12px; font-weight:bold;")
+        self.com_label.setStyleSheet("color:#2dd4bf; font-size:12px; font-weight:bold;")
         cl.addWidget(self.com_label)
 
         # Signal row
@@ -180,7 +180,7 @@ class GroundStation(QtWidgets.QMainWindow):
         # Payload heading
         payload_title = QtWidgets.QLabel("PAYLOAD IMAGE DOWNLINK")
         payload_title.setAlignment(QtCore.Qt.AlignCenter)
-        payload_title.setStyleSheet("font-size:18px; color:#7dd3fc; font-weight:bold;")
+        payload_title.setStyleSheet("font-size:18px; color:#5eead4; font-weight:bold;")
         cl.addWidget(payload_title)
 
         # Progress bar
@@ -194,7 +194,7 @@ class GroundStation(QtWidgets.QMainWindow):
         self.image_label.setScaledContents(False)
         self.image_label.setAlignment(QtCore.Qt.AlignCenter)
         self.image_label.setStyleSheet(
-            "background-color:#000000; border:2px solid #1e293b; border-radius:15px;"
+            "background-color:#000000; border:2px solid #1a1a2e; border-radius:15px;"
         )
         self.image_label.setToolTip(
             "Payload image downlink window.\n"
@@ -809,7 +809,7 @@ class GroundStation(QtWidgets.QMainWindow):
 
     def _blink_link_status(self):
         if not self.is_connected:
-            colour = "#ef4444" if self.blink_state else "#020617"
+            colour = "#ef4444" if self.blink_state else "#000000"
             self.link_status.setStyleSheet(f"color:{colour}; font-size:11px; font-weight:bold;")
             self.blink_state = not self.blink_state
 
@@ -906,11 +906,11 @@ class GroundStation(QtWidgets.QMainWindow):
 # ══════════════════════════════════════════════════════════════════════════════
 #  _ReconnectDialog  (private — used only by GroundStation)
 # ══════════════════════════════════════════════════════════════════════════════
-_BG      = "#020617"
-_SURFACE = "#0f172a"
-_BORDER  = "#1e293b"
-_ACCENT  = "#38bdf8"
-_TEXT    = "#e2e8f0"
+_BG      = "#000000"
+_SURFACE = "#08080f"
+_BORDER  = "#1a1a2e"
+_ACCENT  = "#2dd4bf"
+_TEXT    = "#f5f0e6"
 _MUTED   = "#94a3b8"
 _RED     = "#ef4444"
 _GREEN   = "#22c55e"

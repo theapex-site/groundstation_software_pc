@@ -108,7 +108,7 @@ CONF_BANDS = {"HIGH": 0.70, "MEDIUM": 0.45}
 # carried by the text instead. Eight hues that stay distinguishable against
 # photographic backgrounds, cycled when there are more detections than that.
 OBJECT_COLORS = [
-    "#38bdf8",  # sky
+    "#2dd4bf",  # sky
     "#f97316",  # orange
     "#22c55e",  # green
     "#e879f9",  # fuchsia
@@ -446,14 +446,14 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     """
 
     # GCS stylesheet colours
-    _BG       = "#020617"
-    _PANEL    = "#0f172a"
-    _BORDER   = "#1e293b"
-    _ACCENT   = "#38bdf8"
-    _FG       = "#e2e8f0"
+    _BG       = "#000000"
+    _PANEL    = "#08080f"
+    _BORDER   = "#1a1a2e"
+    _ACCENT   = "#2dd4bf"
+    _FG       = "#f5f0e6"
     _DIM      = "#94a3b8"
-    _BTN_BG   = "#1e293b"
-    _BTN_HOV  = "#38bdf8"
+    _BTN_BG   = "#1a1a2e"
+    _BTN_HOV  = "#2dd4bf"
     _ORANGE   = "#e05a2b"
 
     def __init__(self, parent=None):
@@ -590,7 +590,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._conf_spin.setDecimals(2)
         self._conf_spin.setFixedWidth(68)
         self._conf_spin.setStyleSheet(
-            f"background:#0f172a; color:{self._FG}; border:1px solid {self._BORDER};"
+            f"background:#08080f; color:{self._FG}; border:1px solid {self._BORDER};"
             f"font-family:Consolas; font-size:10px; border-radius:4px; padding:2px;"
         )
         btn_row.addWidget(conf_lbl)
@@ -965,7 +965,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
             for name, n in counts.items():
                 self._log_html(
                     f"<span style='color:{self._DIM};'>  {name:<16}: </span>"
-                    f"<span style='color:#7ecfff;'>{n}</span><br>"
+                    f"<span style='color:#99f6e4;'>{n}</span><br>"
                 )
 
         for d in detections:
@@ -988,9 +988,9 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
             for lbl, val in pairs:
                 self._log_html(
                     f"<span style='color:{self._DIM};'>  {lbl:<12}: </span>"
-                    f"<span style='color:#7ecfff;'>{val}</span><br>"
+                    f"<span style='color:#99f6e4;'>{val}</span><br>"
                 )
-            dead_col = "#ff8800" if d["dead_pct"] >= 50 else "#7ecfff"
+            dead_col = "#ff8800" if d["dead_pct"] >= 50 else "#99f6e4"
             self._log_html(
                 f"<span style='color:{self._DIM};'>  In lost rgn : </span>"
                 f"<span style='color:{dead_col};'>{d['dead_pct']:.1f}%"
@@ -1121,5 +1121,5 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     def _log_pair(self, label: str, value: str):
         self._log_html(
             f"<span style='color:{self._DIM};'>  {label:<10}: </span>"
-            f"<span style='color:#7ecfff;'>{value}</span><br>"
+            f"<span style='color:#99f6e4;'>{value}</span><br>"
         )

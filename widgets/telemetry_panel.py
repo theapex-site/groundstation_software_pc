@@ -35,17 +35,17 @@ class TelemetryPanel(QtWidgets.QFrame):
         settings_btn.setCursor(QtCore.Qt.PointingHandCursor)
         settings_btn.setStyleSheet("""
             QPushButton#settingsBtn {
-                background: #0f172a;
-                color: #38bdf8;
-                border: 1px solid #38bdf8;
+                background: #08080f;
+                color: #2dd4bf;
+                border: 1px solid #2dd4bf;
                 border-radius: 6px;
                 font-size: 16px;
                 padding: 0px;
                 min-width: 32px;
             }
             QPushButton#settingsBtn:hover {
-                background: #38bdf8;
-                color: #020617;
+                background: #2dd4bf;
+                color: #000000;
             }
         """)
         settings_btn.setObjectName("settingsBtn")
