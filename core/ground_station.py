@@ -67,10 +67,14 @@ class GroundStation(QtWidgets.QMainWindow):
         self.resize(1900, 1080)
 
         # ── Background ────────────────────────────────────────────────────────
-        # Drawn in paintEvent from widgets/space_bg, which reproduces the
-        # website's starfield. Was images/BG1.jpg, a stock space photo that did
-        # not match the site.
-        self.bg_pixmap = QtGui.QPixmap()      # kept: paintEvent still checks it
+        # The website's animated space scene, drawn in paintEvent. Was
+        # images/BG1.jpg, a stock space photo that did not match the site.
+        from widgets.space_bg import SpaceScene, FRAME_MS, STATIC
+        self._scene = SpaceScene()
+        if not STATIC:
+            self._bg_timer = QtCore.QTimer(self)
+            self._bg_timer.timeout.connect(self._tick_background)
+            self._bg_timer.start(FRAME_MS)
 
         # ── Mission log (Excel) ───────────────────────────────────────────────
         self._init_mission_log()
@@ -852,12 +856,34 @@ class GroundStation(QtWidgets.QMainWindow):
         popup.show()
         self.graph_popups.append(popup)
 
+    def _sky_region(self) -> QtGui.QRegion:
+        """The part of the window where sky is actually visible.
+
+        A plain update() repaints the whole window, which made Qt recomposite
+        every panel and label thirty times a second: 62% of a core to achieve
+        13 fps, measured. The panels are opaque, so subtracting their
+        rectangles leaves only the gaps and margins that the animation can
+        actually be seen through, and repainting just those is cheap.
+        """
+        region = QtGui.QRegion(self.rect())
+        central = self.centralWidget()
+        if central is None:
+            return region
+        for child in central.findChildren(QtWidgets.QWidget):
+            if child.isVisible() and child.parent() is central:
+                top_left = child.mapTo(self, QtCore.QPoint(0, 0))
+                region -= QtGui.QRegion(QtCore.QRect(top_left, child.size()))
+        return region
+
+    def _tick_background(self):
+        self._scene.advance()
+        self.update(self._sky_region())
+
     def paintEvent(self, event):
         painter = QtGui.QPainter(self)
-        # Generated at the exact window size, so the nebulae sit where the
-        # website puts them instead of being cropped by an aspect-fill scale.
-        from widgets.space_bg import backdrop
-        painter.drawPixmap(0, 0, backdrop(self.width(), self.height()))
+        # Drawn at the exact window size, so the nebulae and the planet sit
+        # where the website puts them rather than being cropped by a scale.
+        self._scene.draw(painter, self.width(), self.height())
 
     def closeEvent(self, event):
             has_data = (

@@ -54,7 +54,7 @@ QMainWindow { background: transparent; color: #f5f0e6; font-family: Consolas; }
 #TelemetryPanel {
     border:1px solid #1a1a2e;
     border-radius:10px;
-    background: rgba(8,8,15,0.78);
+    background: #08080f;
 }
 
 #mainTitle {
@@ -67,7 +67,7 @@ QMainWindow { background: transparent; color: #f5f0e6; font-family: Consolas; }
 #groupBox {
     border:1px solid #1a1a2e;
     border-radius:8px;
-    background: rgba(13,13,24,0.72);
+    background: #0d0d18;
     margin-top:8px;
     padding:6px;
     color:#5eead4;
@@ -78,7 +78,7 @@ QMainWindow { background: transparent; color: #f5f0e6; font-family: Consolas; }
 #valueLabel { color:#f5f0e6; font-size:12px; font-weight:bold; }
 
 QTextEdit {
-    background: rgba(0,0,0,0.80);
+    background: #000000;
     color:#22c55e;
     border:1px solid #1a1a2e;
     font-size:11px;
