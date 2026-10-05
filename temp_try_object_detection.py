@@ -13,15 +13,13 @@ import sys
 
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
-os.environ["PYTORCH_JIT"] = "0"
 
-# Same import order as main.py: torch before PyQt5, or c10.dll conflicts.
+# Same import order as main.py: the detection runtime before PyQt5. Creating
+# an onnxruntime session after QApplication exists segfaults the process.
 try:
-    import torch
-    import torch.nn
-    import torchvision
+    import onnxruntime  # noqa: F401
 except Exception as _e:
-    print("[WARN] torch pre-load failed:", _e)
+    print("[WARN] onnxruntime pre-load failed:", _e)
 
 from PyQt5 import QtWidgets, QtGui
 

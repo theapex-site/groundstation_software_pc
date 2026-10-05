@@ -17,13 +17,17 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["PYTORCH_JIT"] = "0"
 
-# Pre-load torch BEFORE any PyQt5 import to avoid c10.dll conflict
+# Pre-load the detection runtime BEFORE any PyQt5 import.
+#
+# This was torch, for a c10.dll conflict. onnxruntime has the same problem:
+# creating an InferenceSession after QApplication exists segfaults the process
+# outright (exit 139, no traceback), while importing onnxruntime first makes it
+# reliable. The conflict is in the load order, not in torch, so the workaround
+# outlived the library it was written for. Do not move this below PyQt5.
 try:
-    import torch
-    import torch.nn
-    import torchvision
+    import onnxruntime  # noqa: F401
 except Exception as _e:
-    print("[WARN] torch pre-load failed:", _e)
+    print("[WARN] onnxruntime pre-load failed:", _e)
 
 from PyQt5 import QtWidgets, QtGui
 

@@ -16,9 +16,15 @@ Features:
     and a matching .txt report (same stem) in the same folder
 
 Model:
-  torchvision Faster R-CNN ResNet50-FPN v2, COCO-pretrained (80 classes).
-  Weights are bundled at models/fasterrcnn_resnet50_fpn_v2_coco.pth so the app
-  never needs to download anything at runtime.
+  torchvision Faster R-CNN ResNet50-FPN v2, COCO-pretrained (80 classes),
+  exported to ONNX and run with onnxruntime. Bundled at
+  models/fasterrcnn_resnet50_fpn_v2_coco.onnx, so the app never needs to
+  download anything at runtime.
+
+  onnxruntime rather than torch purely for size: torch was 530 MB of a 1.5 GB
+  build against roughly 15 MB here, for output verified identical to within
+  0.006 px. tools/export_onnx.py produces the graph and tools/verify_onnx.py
+  proves it still matches before a build ships.
 
   torchvision is BSD-3-Clause. The previous Ultralytics YOLO backend was
   AGPL-3.0, which is incompatible with shipping APEX GCS as a commercial
@@ -53,12 +59,36 @@ if getattr(sys, "frozen", False):
 else:
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-MODEL_PATH   = os.path.join(BASE_PATH, "models", "fasterrcnn_resnet50_fpn_v2_coco.pth")
+MODEL_PATH   = os.path.join(BASE_PATH, "models", "fasterrcnn_resnet50_fpn_v2_coco.onnx")
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 CAMERA_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "camera")
 DETECT_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "object_detect")
 _LEGACY_DIR  = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "debrie_detect")
+
+# ── COCO class names ────────────────────────────────────────────────────────
+# These used to come from torchvision's weight metadata. torchvision is no
+# longer in the build, so the list is embedded here. The order is the model's
+# label index, so it must not be reordered: "N/A" entries are gaps in COCO's
+# numbering and the index of every later class depends on them staying put.
+# tools/export_onnx.py asserts this list still matches torchvision's.
+COCO_CATEGORIES = (
+    "__background__", "person", "bicycle", "car", "motorcycle",
+    "airplane", "bus", "train", "truck", "boat", "traffic light",
+    "fire hydrant", "N/A", "stop sign", "parking meter", "bench", "bird",
+    "cat", "dog", "horse", "sheep", "cow", "elephant", "bear", "zebra",
+    "giraffe", "N/A", "backpack", "umbrella", "N/A", "N/A", "handbag",
+    "tie", "suitcase", "frisbee", "skis", "snowboard", "sports ball",
+    "kite", "baseball bat", "baseball glove", "skateboard", "surfboard",
+    "tennis racket", "bottle", "N/A", "wine glass", "cup", "fork",
+    "knife", "spoon", "bowl", "banana", "apple", "sandwich", "orange",
+    "broccoli", "carrot", "hot dog", "pizza", "donut", "cake", "chair",
+    "couch", "potted plant", "bed", "N/A", "dining table", "N/A", "N/A",
+    "toilet", "N/A", "tv", "laptop", "mouse", "remote", "keyboard",
+    "cell phone", "microwave", "oven", "toaster", "sink", "refrigerator",
+    "N/A", "book", "clock", "vase", "scissors", "teddy bear",
+    "hair drier", "toothbrush",
+)
 
 # ── Confidence palette ──────────────────────────────────────────────────────
 # Replaces the old debris risk grading: with a generic COCO model there is no
@@ -359,7 +389,8 @@ class _DetectWorker(QtCore.QThread):
 
     def run(self):
         try:
-            import cv2, time, torch
+            import cv2, time
+            import numpy as np
             img_bgr = cv2.imread(self.img_path)
             if img_bgr is None:
                 raise ValueError(
@@ -368,33 +399,25 @@ class _DetectWorker(QtCore.QThread):
                 )
             H, W = img_bgr.shape[:2]
 
-            rgb    = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
-            tensor = torch.from_numpy(rgb).permute(2, 0, 1).float() / 255.0
+            # The exported graph carries the model's own normalisation and
+            # resizing, so it wants exactly what torch was given: RGB, CHW,
+            # float 0..1. Thread count is set once on the session in
+            # _load_model, not per call.
+            rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+            inp = np.ascontiguousarray(
+                rgb.transpose(2, 0, 1).astype(np.float32) / 255.0)
 
-            # main.py sets OMP_NUM_THREADS=1 (needed for the torch/Qt OpenMP
-            # workaround), which leaves torch single-threaded and makes this
-            # model take ~9 s. Raising torch's own thread count brings it back
-            # to ~3.5 s with identical results. Capped rather than maxed so the
-            # 50 ms serial telemetry poll on the main thread is not starved.
-            prev_threads = torch.get_num_threads()
-            torch.set_num_threads(max(1, min(6, (os.cpu_count() or 2) // 2)))
-            try:
-                t0 = time.time()
-                with torch.inference_mode():
-                    out = self.detector([tensor])[0]
-                elapsed = (time.time() - t0) * 1000
-            finally:
-                torch.set_num_threads(prev_threads)
+            t0 = time.time()
+            boxes, labels, scores = self.detector.run(None, {"image": inp})
+            elapsed = (time.time() - t0) * 1000
 
             dead = _dead_mask(img_bgr)
             received = _received_pct(dead)
 
             detections = []
-            keep = out["scores"] >= self.conf
-            for box, score, label in zip(out["boxes"][keep],
-                                         out["scores"][keep],
-                                         out["labels"][keep]):
-                x1, y1, x2, y2 = (float(v) for v in box.tolist())
+            keep = scores >= self.conf
+            for box, score, label in zip(boxes[keep], scores[keep], labels[keep]):
+                x1, y1, x2, y2 = (float(v) for v in box)
                 ci = int(label)
                 nm = self.categories[ci] if 0 <= ci < len(self.categories) else f"class_{ci}"
                 detections.append(_compute_metrics([x1, y1, x2, y2],
@@ -715,21 +738,16 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         """
         Load the detector on the MAIN thread, on first use.
 
-        Importing torch/torchvision and building the network inside a QThread
-        caused an intermittent native crash on Windows (exit 127,
-        ERROR_PROC_NOT_FOUND, no Python traceback) — the same class of
-        torch/Qt DLL conflict that main.py's c10.dll pre-load works around.
-        Inference itself is threaded in _DetectWorker, which is the
-        arrangement the shipped build already proved stable.
+        Kept on the main thread because the torch build crashed natively when
+        the network was built inside a QThread (exit 127, no traceback).
+        onnxruntime has no such problem, but the arrangement is already proven
+        and loading is fast, so it stays. Inference itself is threaded in
+        _DetectWorker.
         """
         if self._detector is not None:
             return True
         try:
-            import torch
-            from torchvision.models.detection import (
-                fasterrcnn_resnet50_fpn_v2,
-                FasterRCNN_ResNet50_FPN_V2_Weights,
-            )
+            import onnxruntime as ort
             if not Path(MODEL_PATH).exists():
                 self._on_model_load_fail(f"Model not found: {MODEL_PATH}")
                 return False
@@ -738,15 +756,21 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
             self._progress.setVisible(True)
             QtWidgets.QApplication.processEvents()      # let the UI paint first
 
-            # Category metadata lives in torchvision itself, so this needs no network.
-            categories = list(FasterRCNN_ResNet50_FPN_V2_Weights.COCO_V1.meta["categories"])
-            model = fasterrcnn_resnet50_fpn_v2(
-                weights=None, weights_backbone=None, num_classes=len(categories)
-            )
-            model.load_state_dict(torch.load(MODEL_PATH, map_location="cpu"))
-            model.eval()
+            # main.py sets OMP_NUM_THREADS=1, which would leave this
+            # single-threaded and take ~9 s per image. Setting the session's
+            # own thread count brings it back to ~3 s with identical output.
+            # Capped rather than maxed so the 50 ms serial telemetry poll on
+            # the main thread is not starved.
+            opts = ort.SessionOptions()
+            opts.intra_op_num_threads = max(1, min(6, (os.cpu_count() or 2) // 2))
+            opts.log_severity_level = 3          # warnings only, not every node
 
-            self._detector   = model
+            session = ort.InferenceSession(
+                MODEL_PATH, sess_options=opts,
+                providers=["CPUExecutionProvider"])
+
+            categories = list(COCO_CATEGORIES)
+            self._detector   = session
             self._categories = categories
             usable = len([c for c in categories if c not in ("N/A", "__background__")])
             self._set_status("● READY  [Faster R-CNN R50-FPN v2 (COCO)]", "#44cc44")

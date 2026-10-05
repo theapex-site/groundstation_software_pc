@@ -8,8 +8,9 @@ widgets/drive_token.pickle
 *.pem
 .env
 
-# ── Large model weights — fetch with tools/fetch_model.py ──────────
+# ── Large model weights — see tools/fetch_model.py + tools/export_onnx.py ──
 models/*.pth
+models/*.onnx
 
 # ── Build output ───────────────────────────────────────────────────
 build/

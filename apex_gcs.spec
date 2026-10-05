@@ -7,15 +7,26 @@ _site = r"C:\Users\tgvis\AppData\Local\Programs\Python\Python311\Lib\site-packag
 if _site not in sys.path:
     sys.path.insert(0, _site)
 
-from PyInstaller.utils.hooks import collect_all, collect_submodules
+from PyInstaller.utils.hooks import collect_all
 
-_tor_d, _tor_b, _tor_h = collect_all('torch')
-_tv_d,  _tv_b,  _tv_h  = collect_all('torchvision')
+# torch and torchvision are gone: detection runs on onnxruntime, which is
+# ~15 MB against torch's 530 MB in the build.
+_ort_d, _ort_b, _ort_h = collect_all('onnxruntime')
 _cv_d,  _cv_b,  _cv_h  = collect_all('cv2')
+# numpy must be collected explicitly now. collect_all('torch') used to drag in
+# the BLAS/OpenMP DLLs numpy also loads, so numpy worked by accident; without
+# torch the frozen build died at startup with "DLL load failed while importing
+# _multiarray_umath".
+_np_d,  _np_b,  _np_h  = collect_all('numpy')
 
 added_files = [
     ("images",                      "images"),
-    ("models",                      "models"),
+    # Named individually, not the whole models/ folder: a developer tree also
+    # holds the 175 MB .pth that tools/export_onnx.py converts from, and
+    # copying the folder shipped it to customers even though the app only ever
+    # loads the .onnx.
+    ("models/fasterrcnn_resnet50_fpn_v2_coco.onnx", "models"),
+    ("models/space_club_cubesat.glb",               "models"),
     # Silicon Labs CP210x driver, so a customer with no internet on the bench
     # is not stuck hunting for it. Unmodified package, catalog included: the
     # .cat signs a hash of silabser.inf, so editing the INF would invalidate
@@ -26,12 +37,10 @@ added_files = [
 a = Analysis(
     ["main.py"],
     pathex=[os.path.abspath("."), _site],
-    binaries=_tor_b + _tv_b + _cv_b,
-    datas=added_files + _tor_d + _tv_d + _cv_d,
+    binaries=_ort_b + _cv_b + _np_b,
+    datas=added_files + _ort_d + _cv_d + _np_d,
     hiddenimports=list(set(
-        _tor_h + _tv_h + _cv_h
-        + collect_submodules('torch')
-        + collect_submodules('torchvision')
+        _ort_h + _cv_h + _np_h
         + [
             "PyQt5.QtWebEngineWidgets",
             "PyQt5.QtWebEngine",
@@ -79,12 +88,7 @@ a = Analysis(
             # ===== Detection dependencies =====
             "yaml",
             "cv2",
-            "torch",
-            "torchvision",
-            "torchvision.transforms",
-            "torchvision.ops",
-            "torchvision.models",
-            "torchvision.models.detection",
+            "onnxruntime",
         ]
     )),
     hookspath=[],
@@ -96,6 +100,8 @@ a = Analysis(
         "keras",
         "sklearn",
         "scipy",
+        "torch",
+        "torchvision",
         # Swept in from site-packages, not imported anywhere in the app:
         # jaxlib alone was 195 MB of a 1.5 GB build, pandas another 18 MB.
         "jax",
