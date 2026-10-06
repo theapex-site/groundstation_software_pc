@@ -21,14 +21,14 @@ try:
 except Exception as _e:
     print("[WARN] onnxruntime pre-load failed:", _e)
 
-from PyQt5 import QtWidgets, QtGui
+from PyQt5 import QtWidgets
 
-from config import STYLE
+import theme
 from widgets.object_detection import ObjectDetectionDialog
 
 app = QtWidgets.QApplication(sys.argv)
-QtWidgets.QToolTip.setFont(QtGui.QFont("Consolas", 10))
-app.setStyleSheet(STYLE)
+theme.init(app)
+app.setStyleSheet(theme.qss())
 
 dlg = ObjectDetectionDialog()
 dlg.setModal(False)

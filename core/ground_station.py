@@ -33,6 +33,7 @@ from PIL import Image, ImageFile
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
+import theme
 from config import (
     BAUD_RATE, SERIAL_TIMEOUT, SERIAL_POLL_MS,
     PACKET_SIZE, IMAGE_RX_TIMEOUT, FILE_INFO_TIMEOUT, IMAGE_MODE_TIMEOUT,
@@ -105,6 +106,10 @@ class GroundStation(QtWidgets.QMainWindow):
         self.serial_timer = QtCore.QTimer()
         self.serial_timer.timeout.connect(self._read_serial)
         self.serial_timer.start(SERIAL_POLL_MS)
+
+        # ── Check for updates ─────────────────────────────────────────────────
+        from core.updater import check_for_updates
+        check_for_updates(parent=self)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  UI construction
@@ -303,6 +308,27 @@ class GroundStation(QtWidgets.QMainWindow):
                     print("Temp mission file deleted.")
             except Exception as e:
                 print("Cleanup error:", e)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  Auto-update
+    # ══════════════════════════════════════════════════════════════════════════
+    @QtCore.pyqtSlot(str, str)
+    def _show_update_dialog(self, latest_version, download_url):
+        import webbrowser
+        from config import APP_VERSION
+        msg = ThemedMessageBox(self)
+        msg.setWindowTitle("Update Available")
+        msg.setText(
+            f"A new version of APEX GCS is available!\n\n"
+            f"Current: v{APP_VERSION}\n"
+            f"Latest:  v{latest_version}\n\n"
+            f"Would you like to download it now?"
+        )
+        msg.setStandardButtons(
+            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
+        )
+        if msg.exec_() == QtWidgets.QMessageBox.Yes:
+            webbrowser.open(download_url)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Serial
@@ -930,14 +956,15 @@ class GroundStation(QtWidgets.QMainWindow):
 # ══════════════════════════════════════════════════════════════════════════════
 #  _ReconnectDialog  (private — used only by GroundStation)
 # ══════════════════════════════════════════════════════════════════════════════
-_BG      = "#000000"
-_SURFACE = "#08080f"
-_BORDER  = "#1a1a2e"
-_ACCENT  = "#2dd4bf"
-_TEXT    = "#f5f0e6"
-_MUTED   = "#94a3b8"
-_RED     = "#ef4444"
-_GREEN   = "#22c55e"
+# A third copy of the palette used to be declared here, for one dialog.
+_BG      = theme.DEEP
+_SURFACE = theme.PANEL
+_BORDER  = theme.LINE
+_ACCENT  = theme.TEAL
+_TEXT    = theme.CREAM
+_MUTED   = theme.SLATE
+_RED     = theme.ALARM
+_GREEN   = theme.OK
 
 
 class _ReconnectDialog(QtWidgets.QDialog):

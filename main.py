@@ -29,20 +29,27 @@ try:
 except Exception as _e:
     print("[WARN] onnxruntime pre-load failed:", _e)
 
-from PyQt5 import QtWidgets, QtGui
+from PyQt5 import QtCore, QtWidgets
 
-from config import STYLE
+import theme
 from widgets.dialogs     import LoginWindow
 from core.ground_station import GroundStation
+
+# Must be set before the QApplication is constructed, or they do nothing.
+# Without them the whole UI is bitmap-upscaled on any display at 125% or 150%
+# scaling, which is the default on most current Windows laptops.
+QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
+QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
 
 
 def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
 
-    QtWidgets.QToolTip.setFont(QtGui.QFont("Consolas", 10))
-    QtWidgets.QToolTip.setPalette(QtGui.QPalette())
-    app.setStyleSheet(STYLE)
+    # Loads any bundled faces, resolves the display/body/mono families against
+    # what is installed, and sets the window icon from icon.ico.
+    theme.init(app)
+    app.setStyleSheet(theme.qss())
 
     # Show the Login + COM Port window
     login = LoginWindow()

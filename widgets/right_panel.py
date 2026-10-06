@@ -11,8 +11,10 @@ RightPanel  – right-side panel containing:
               • Embedded Google Maps view
 """
 
+import math
 import os
 import sys
+import time
 from datetime import datetime
 
 import trimesh
@@ -31,8 +33,22 @@ if getattr(sys, 'frozen', False):
 else:
     BASE_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
+# How far the CubeSat must move, and how long must pass, before the embedded
+# map is rebuilt. 0.0005° is roughly 55 m at the equator — below the zoom
+# level the map is shown at, so a smaller step would not be visible anyway.
+MAP_MOVE_MIN_DEG = 0.0005
+MAP_RELOAD_MIN_S = 15.0
+
 class _MapView(QtWidgets.QWidget):
-    double_clicked = QtCore.pyqtSignal()
+    """
+    The embedded map.
+
+    There used to be a fully transparent overlay stretched across this widget,
+    with WA_TransparentForMouseEvents off, purely so a double-click could be
+    caught. That swallowed every mouse event, so the map could not be panned,
+    zoomed or scrolled at all — while its tooltip claimed it was interactive.
+    The overlay is gone; "Open in browser" is an explicit button instead.
+    """
 
     def __init__(self):
         super().__init__()
@@ -40,18 +56,8 @@ class _MapView(QtWidgets.QWidget):
         self._layout.setContentsMargins(0, 0, 0, 0)
 
         self._web = QWebEngineView(self)
+        self._web.setStyleSheet("background: transparent;")
         self._layout.addWidget(self._web)
-
-        # Transparent overlay to catch mouse events
-        self._overlay = QtWidgets.QWidget(self)
-        self._overlay.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, False)
-        self._overlay.setStyleSheet("background: transparent;")
-        self._overlay.mouseDoubleClickEvent = lambda e: self.double_clicked.emit()
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self._overlay.setGeometry(self.rect())
-        self._web.setGeometry(self.rect())
 
     def setHtml(self, html):
         self._web.setHtml(html)
@@ -251,13 +257,28 @@ class RightPanel(QtWidgets.QFrame):
         map_group.setToolTipDuration(2000)
         map_layout = QtWidgets.QVBoxLayout()
         map_group.setLayout(map_layout)
-        """self.map_view = QWebEngineView()"""
+
         self._map_lat = DEFAULT_LAT
         self._map_lon = DEFAULT_LON
+        # What the embedded frame is currently showing, as opposed to the
+        # latest position received. load_map() compares the two.
+        self._map_shown_lat = DEFAULT_LAT
+        self._map_shown_lon = DEFAULT_LON
+        self._map_loaded_at = None
+
+        open_row = QtWidgets.QHBoxLayout()
+        open_row.setContentsMargins(0, 0, 0, 0)
+        open_row.addStretch()
+        open_btn = QtWidgets.QPushButton("Open in browser")
+        open_btn.setObjectName("ghostBtn")
+        open_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        open_btn.setToolTip("Open this position in your browser and copy the link.")
+        open_btn.clicked.connect(self._open_map_in_browser)
+        open_row.addWidget(open_btn)
+        map_layout.addLayout(open_row)
+
         self.map_view = _MapView()
-        self.map_view.double_clicked.connect(self._on_map_double_click)
-        self.map_view.setToolTip("Interactive map showing CubeSat position based on GPS telemetry.")
-        self.map_view.setToolTipDuration(2000)
+        self.map_view.setToolTip("CubeSat position from GPS telemetry. Drag to pan, scroll to zoom.")
         map_layout.addWidget(self.map_view)
         layout.addWidget(map_group, 1)
 
@@ -265,17 +286,48 @@ class RightPanel(QtWidgets.QFrame):
 
     # ── public API ────────────────────────────────────────────────────────────
     def load_map(self, lat, lon):
-        self._map_lat = lat
-        self._map_lon = lon
+        """
+        Point the map at a new position.
+
+        This is called from _parse_packet, so at 1 Hz it ran once a second —
+        and it used to rebuild the whole document and hand it to setHtml()
+        every time. The frame never finished loading: it flashed white, lost
+        its tiles and reset any pan or zoom the operator had made.
+
+        The position is always recorded so "Open in browser" stays current,
+        but the frame is only rebuilt when the CubeSat has actually moved far
+        enough to matter, and never more than once every MAP_RELOAD_MIN_S.
+        """
+        try:
+            lat_f, lon_f = float(lat), float(lon)
+        except (TypeError, ValueError):
+            return
+
+        self._map_lat = lat_f
+        self._map_lon = lon_f
+
+        now = time.monotonic()
+        if self._map_loaded_at is not None:
+            moved = math.hypot(lat_f - self._map_shown_lat,
+                               lon_f - self._map_shown_lon)
+            if (moved < MAP_MOVE_MIN_DEG
+                    or now - self._map_loaded_at < MAP_RELOAD_MIN_S):
+                return
+
+        self._map_shown_lat = lat_f
+        self._map_shown_lon = lon_f
+        self._map_loaded_at = now
+
         html = (
-            f"<html><body>"
-            f'<iframe width="100%" height="100%" '
-            f'src="https://maps.google.com/maps?q={lat},{lon}&z=13&output=embed">'
-            f"</iframe></body></html>"
+            "<html><body style='margin:0;background:#000'>"
+            f'<iframe width="100%" height="100%" frameborder="0" '
+            f'style="border:0;display:block" '
+            f'src="https://maps.google.com/maps?q={lat_f},{lon_f}&z=13&output=embed">'
+            "</iframe></body></html>"
         )
         self.map_view.setHtml(html)
-    
-    def _on_map_double_click(self):
+
+    def _open_map_in_browser(self):
         import webbrowser
         url = f"https://www.google.com/maps?q={self._map_lat},{self._map_lon}&z=13"
         QtWidgets.QApplication.clipboard().setText(url)

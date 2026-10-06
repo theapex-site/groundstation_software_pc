@@ -51,6 +51,7 @@ from PyQt5 import QtCore, QtGui, QtWidgets
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 
+import theme
 from widgets.dialogs import ThemedMessageBox
 
 # ── BASE_PATH (mirrors config.py / right_panel.py pattern) ───────────────────
@@ -445,16 +446,21 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     Styled to match the APEX GCS dark theme.
     """
 
-    # GCS stylesheet colours
-    _BG       = "#000000"
-    _PANEL    = "#08080f"
-    _BORDER   = "#1a1a2e"
-    _ACCENT   = "#2dd4bf"
-    _FG       = "#f5f0e6"
-    _DIM      = "#94a3b8"
-    _BTN_BG   = "#1a1a2e"
-    _BTN_HOV  = "#2dd4bf"
-    _ORANGE   = "#e05a2b"
+    # A fourth copy of the palette used to live here, under different names
+    # and with its own invented accent. These alias theme.py now.
+    _BG       = theme.DEEP
+    _PANEL    = theme.PANEL
+    _RAISED   = theme.RAISED
+    _BORDER   = theme.LINE
+    _ACCENT   = theme.TEAL
+    _FG       = theme.CREAM
+    _DIM      = theme.SLATE
+    _BTN_BG   = theme.RAISED
+    _BTN_HOV  = theme.TEAL
+    # Was #e05a2b, a rust orange that appears nowhere on theapex.site and sat
+    # on the APEX wordmark in this dialog's header, so the window read as a
+    # different product. --orange is the real token.
+    _ORANGE   = theme.AMBER
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -893,7 +899,11 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
             )
             return
 
-        self._btn_test.setEnabled(False)
+        # The whole row, not just Test. Only Test used to be disabled, so
+        # Clear stayed live through a 3–9 second inference — and clearing
+        # sets _img_path to None, which _update_report then handed to
+        # Path(), raising TypeError the moment the worker came back.
+        self._set_busy(True)
         self._progress.setVisible(True)
         self._conf_thresh = self._conf_spin.value()
         self._bottom_lbl.setText("Running inference… (a few seconds on CPU)")
@@ -904,9 +914,22 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._worker.errored.connect(self._on_detect_error)
         self._worker.start()
 
+    def _set_busy(self, busy: bool):
+        for b in (self._btn_last, self._btn_upload, self._btn_test,
+                  self._btn_save, self._btn_clear):
+            b.setEnabled(not busy)
+        self._conf_spin.setEnabled(not busy)
+
     @QtCore.pyqtSlot(object, list, str, float, float)
     def _on_detect_finished(self, annotated_bgr, detections, summary, elapsed_ms,
                             received_pct=100.0):
+        if self._img_path is None:
+            # Cleared while the worker was running; there is nothing to report
+            # against and _update_report would raise on the missing path.
+            self._progress.setVisible(False)
+            self._set_busy(False)
+            return
+
         self._annotated_bgr  = annotated_bgr
         self._detections     = detections
         self._summary        = summary
@@ -916,7 +939,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._show_bgr(annotated_bgr)
         self._update_report(detections, summary, elapsed_ms, received_pct)
         self._progress.setVisible(False)
-        self._btn_test.setEnabled(True)
+        self._set_busy(False)
         self._bottom_lbl.setText(
             f"Detection complete, {len(detections)} object(s) found  |  {elapsed_ms:.0f} ms"
         )
@@ -924,9 +947,18 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     @QtCore.pyqtSlot(str)
     def _on_detect_error(self, msg: str):
         self._progress.setVisible(False)
-        self._btn_test.setEnabled(True)
+        self._set_busy(False)
         self._bottom_lbl.setText(f"Error: {msg}")
         ThemedMessageBox.critical(self, "Detection Error", msg)
+
+    def closeEvent(self, event):
+        """Don't leave a QThread writing into widgets that are being torn down."""
+        worker = self._worker
+        if worker is not None and worker.isRunning():
+            worker.requestInterruption()
+            worker.quit()
+            worker.wait(3000)
+        super().closeEvent(event)
 
     # ─────────────────────────────────────────────────────────────────────────
     #  Report panel

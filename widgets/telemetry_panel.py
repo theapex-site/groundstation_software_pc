@@ -222,14 +222,28 @@ class TelemetryPanel(QtWidgets.QFrame):
     # ── internal ──────────────────────────────────────────────────────────────
     @staticmethod
     def _color(label, value: float, safe_min, safe_max, warn_min, warn_max):
+        """
+        Mark a reading safe / warning / alarm.
+
+        Sets a property the global sheet styles, rather than writing a
+        stylesheet onto the widget. A widget stylesheet *replaces* the
+        #valueLabel rule instead of merging with it, so the old version
+        silently dropped font-size and every thresholded value shrank to the
+        default a second after launch, leaving two sizes in one column.
+        """
         try:
             value = float(value)
         except (ValueError, TypeError):
             return
         if safe_min <= value <= safe_max:
-            c = "#22c55e"   # green
+            state = "ok"
         elif warn_min <= value <= warn_max:
-            c = "#facc15"   # yellow
+            state = "warn"
         else:
-            c = "#ef4444"   # red
-        label.setStyleSheet(f"color:{c}; font-weight:bold;")
+            state = "alarm"
+
+        if label.property("state") == state:
+            return
+        label.setProperty("state", state)
+        label.style().unpolish(label)
+        label.style().polish(label)

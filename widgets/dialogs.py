@@ -18,27 +18,28 @@ import tempfile, os
 from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
 from config import APEX_LOGO, title
+import theme
 import widgets.auth_backend as auth
 import widgets.firebase_backend as fb
 
-# ── Shared GCS palette (keep in sync with config.py STYLE) ───────────────────
-# Matches theapex.site: css/style.css --navy-deep, --navy-panel, --navy-line,
-# --cream, --slate and --teal. Status colours further down are deliberately
-# NOT from the site palette: a coloured telemetry value has to mean something,
-# so green/amber/red stay semantic rather than being rebranded.
-_BG       = "#000000"
-_SURFACE  = "#08080f"
-_BORDER   = "#1a1a2e"
-_ACCENT   = "#2dd4bf"
-_TEXT     = "#f5f0e6"
-_MUTED    = "#94a3b8"
+# ── Shared GCS palette ────────────────────────────────────────────────────────
+# These used to be a second hardcoded copy of the palette, alongside the ones
+# in config.py, ground_station.py and object_detection.py. They now alias
+# theme.py so there is one place to change.
+_BG       = theme.DEEP
+_SURFACE  = theme.PANEL
+_RAISED   = theme.RAISED
+_BORDER   = theme.LINE
+_ACCENT   = theme.TEAL
+_TEXT     = theme.CREAM
+_MUTED    = theme.SLATE
 
 # Where "Need Help?" writes to. Same address as the support button in the
 # licence email.
 SUPPORT_EMAIL = "support@theapex.site"
-_GREEN    = "#22c55e"
-_YELLOW   = "#facc15"
-_RED      = "#ef4444"
+_GREEN    = theme.OK
+_YELLOW   = theme.WARN
+_RED      = theme.ALARM
 
 # ── Session persistence (survives app close, cleared on system reboot) ────────
 # %WINDIR%\Temp is cleared on reboot; fall back to regular temp if unavailable
@@ -99,76 +100,23 @@ def _clear_session() -> None:
     except Exception:
         pass
 
-_BASE_STYLE = f"""
-    * {{
-        font-family: Consolas;
-        color: {_TEXT};
-    }}
-    QDialog, QFrame {{
-        background-color: {_BG};
-    }}
+def _base_style() -> str:
+    """
+    Dialog chrome, on top of the application sheet.
+
+    Built per call rather than at import time because theme.init() resolves
+    the font families once a QApplication exists, and this module is imported
+    before that happens.
+    """
+    return f"""
+    QDialog, QFrame {{ background-color: {_BG}; }}
     QLabel {{
         color: {_TEXT};
-        font-size: 12px;
+        font-family: "{theme.BODY}";
+        font-size: {theme.FS_BODY}px;
     }}
-    QPushButton {{
-        background: {_SURFACE};
-        color: {_ACCENT};
-        border: 1px solid {_ACCENT};
-        padding: 6px 18px;
-        border-radius: 5px;
-        font-size: 12px;
-        min-width: 80px;
-    }}
-    QPushButton:hover {{
-        background: {_ACCENT};
-        color: {_BG};
-    }}
-    QPushButton#dangerBtn {{
-        border-color: {_RED};
-        color: {_RED};
-    }}
-    QPushButton#dangerBtn:hover {{
-        background: {_RED};
-        color: {_BG};
-    }}
-    QComboBox {{
-        background: {_SURFACE};
-        color: {_TEXT};
-        border: 1px solid {_BORDER};
-        padding: 4px 8px;
-        border-radius: 4px;
-        font-size: 12px;
-    }}
-    QComboBox QAbstractItemView {{
-        background: {_SURFACE};
-        color: {_TEXT};
-        selection-background-color: {_ACCENT};
-        selection-color: {_BG};
-        border: 1px solid {_BORDER};
-    }}
-    QComboBox::drop-down {{
-        border: none;
-    }}
-    QComboBox::down-arrow {{
-        image: none;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 6px solid {_ACCENT};
-        margin-right: 8px;
-    }}
-    QLineEdit {{
-        background: {_SURFACE};
-        color: {_TEXT};
-        border: 1.5px solid #1a1a2e;
-        border-radius: 5px;
-        padding: 6px 10px;
-        font-size: 15px;
-    }}
-    QLineEdit:focus {{
-        border: 2px solid #2dd4bf;
-        background: #0d0d18;
-    }}
+    QPushButton {{ min-width: 92px; text-align: center; }}
+    QLineEdit {{ font-size: {theme.FS_VALUE}px; }}
 """
 
 def _labelled_input(parent_layout, label_text, placeholder="",
@@ -210,7 +158,7 @@ class _VerifyEmailDialog(QtWidgets.QDialog):
         self.setWindowTitle("Verify Email")
         self.setModal(True)
         self.setFixedWidth(420)
-        self.setStyleSheet(_BASE_STYLE)
+        self.setStyleSheet(_base_style())
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.setContentsMargins(24, 20, 24, 20)
@@ -336,8 +284,8 @@ class _ReauthPage(QtWidgets.QWidget):
                 background:{_ACCENT}; color:{_BG}; border:none; border-radius:6px;
                 padding:10px; font-size:13px; font-weight:bold;
             }}
-            QPushButton:hover {{ background:#5eead4; }}
-            QPushButton:disabled {{ background:#1a1a2e; color:#475569; }}
+            QPushButton:hover {{ background:{theme.GRADIENT_COOL}; }}
+            QPushButton:disabled {{ background:{_BORDER}; color:{theme.DISABLED}; }}
         """)
         self.auth_btn.clicked.connect(self._do_auth)
         lay.addWidget(self.auth_btn)
@@ -551,7 +499,7 @@ class _LoginPage(QtWidgets.QWidget):
                 border: none; border-radius: 5px;
                 font-size: 13px; font-weight: bold;
             }}
-            QPushButton:hover {{ background: #5eead4; }}
+            QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
         """)
         sign_in_btn.clicked.connect(self._do_login)
         lay.addWidget(sign_in_btn)
@@ -588,7 +536,7 @@ class _LoginPage(QtWidgets.QWidget):
         pwd   = self.pwd_inp.text().strip()
 
         if not email or not pwd:
-            QtWidgets.QMessageBox.warning(self, "Missing fields",
+            ThemedMessageBox.warning(self, "Missing fields",
                                           "Please enter email and password.")
             return
 
@@ -598,7 +546,7 @@ class _LoginPage(QtWidgets.QWidget):
 
             if not fb.account_info(session["idToken"]).get("emailVerified"):
                 QtWidgets.QApplication.restoreOverrideCursor()
-                QtWidgets.QMessageBox.warning(
+                ThemedMessageBox.warning(
                     self, "Email Not Verified",
                     "Please confirm the verification link we emailed to\n"
                     + email + "\n\nThen sign in again.")
@@ -622,7 +570,7 @@ class _LoginPage(QtWidgets.QWidget):
             ok, msg = fb.check_entitlement(session, licence)
         except fb.AuthError as exc:
             QtWidgets.QApplication.restoreOverrideCursor()
-            QtWidgets.QMessageBox.critical(self, "Login Failed", str(exc))
+            ThemedMessageBox.critical(self, "Login Failed", str(exc))
             return
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
@@ -647,7 +595,7 @@ class _LoginPage(QtWidgets.QWidget):
     def _do_forgot(self):
         email = self.email_inp.text().strip()
         if not email:
-            QtWidgets.QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self, "No email", "Enter your email in the field above first.")
             return
 
@@ -659,9 +607,9 @@ class _LoginPage(QtWidgets.QWidget):
             fb.send_password_reset(email)
         except fb.AuthError as exc:
             if "No account found" not in str(exc):
-                QtWidgets.QMessageBox.critical(self, "Error", str(exc))
+                ThemedMessageBox.critical(self, "Error", str(exc))
                 return
-        QtWidgets.QMessageBox.information(
+        ThemedMessageBox.information(
             self, "Check Your Email",
             "If an account exists for\n" + email + "\n\n"
             "a password reset link is on its way. Open it, set a new "
@@ -714,7 +662,7 @@ class TermsDialog(QtWidgets.QDialog):
         self.setWindowFlags(
             QtCore.Qt.Dialog |
             QtCore.Qt.WindowCloseButtonHint)
-        self.setStyleSheet(_BASE_STYLE + f"""
+        self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
@@ -728,7 +676,6 @@ class TermsDialog(QtWidgets.QDialog):
                 padding: 10px;
                 font-size: 12px;
                 font-family: Consolas;
-                line-height: 1.6;
             }}
             QScrollBar:vertical {{
                 background: {_BG};
@@ -789,7 +736,7 @@ class TermsDialog(QtWidgets.QDialog):
                 border: none; border-radius: 5px;
                 font-size: 12px; font-weight: bold;
             }}
-            QPushButton:hover {{ background: #5eead4; }}
+            QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
         """)
         ok_btn.clicked.connect(self.accept)
         lay.addWidget(ok_btn)
@@ -959,7 +906,7 @@ class _SignUpPage(QtWidgets.QWidget):
                 background: transparent;
                 min-width: 0px;
             }}
-            QPushButton:hover {{ color: #5eead4; }}
+            QPushButton:hover {{ color: {_ACCENT}; }}
         """)
         terms_link.clicked.connect(self._show_terms)
         terms_row.addWidget(terms_link)
@@ -978,7 +925,7 @@ class _SignUpPage(QtWidgets.QWidget):
                 border: none; border-radius: 5px;
                 font-size: 13px; font-weight: bold;
             }}
-            QPushButton:hover {{ background: #5eead4; }}
+            QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
             QPushButton:disabled {{
                 background: {_BORDER}; color: {_MUTED};
             }}
@@ -1021,23 +968,23 @@ class _SignUpPage(QtWidgets.QWidget):
         pin   = self.pin_inp.text().strip()
 
         if state == "-- Select State / UT --":
-            QtWidgets.QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self, "Missing Fields", "Please select your state.")
             return
 
         if "" in (name, email, pwd, repwd, inst, city, cntry, pin):
-            QtWidgets.QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self, "Missing Fields", "Please fill in all fields.")
             return
 
         if pwd != repwd:
-            QtWidgets.QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self, "Password Mismatch", "Passwords do not match.")
             return
 
         licence = fb.normalise_key(self.licence_inp.text())
         if not licence:
-            QtWidgets.QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self, "Missing Licence Key",
                 "Please enter the licence key emailed to you when your "
                 "CubeSat order was confirmed.")
@@ -1052,21 +999,21 @@ class _SignUpPage(QtWidgets.QWidget):
             licence_doc = fb.fetch_licence(session["idToken"], licence)
             if licence_doc is None:
                 QtWidgets.QApplication.restoreOverrideCursor()
-                QtWidgets.QMessageBox.critical(
+                ThemedMessageBox.critical(
                     self, "Licence Does Not Match",
                     "That licence key does not match this email address.\n\n"
                     "Use the same address your CubeSat order was placed with.")
                 return
             if licence_doc.get("status") != "active":
                 QtWidgets.QApplication.restoreOverrideCursor()
-                QtWidgets.QMessageBox.critical(
+                ThemedMessageBox.critical(
                     self, "Licence Cancelled",
                     "This licence has been cancelled.\n\n"
                     "Please contact APEX to have it reactivated.")
                 return
             if licence_doc.get("uid"):
                 QtWidgets.QApplication.restoreOverrideCursor()
-                QtWidgets.QMessageBox.critical(
+                ThemedMessageBox.critical(
                     self, "Licence Already Used",
                     "This licence has already been activated on another "
                     "account.\n\nContact APEX if you need it moved.")
@@ -1075,7 +1022,7 @@ class _SignUpPage(QtWidgets.QWidget):
             fb.send_verification_email(session["idToken"])
         except fb.AuthError as exc:
             QtWidgets.QApplication.restoreOverrideCursor()
-            QtWidgets.QMessageBox.critical(self, "Sign Up Failed", str(exc))
+            ThemedMessageBox.critical(self, "Sign Up Failed", str(exc))
             return
         finally:
             QtWidgets.QApplication.restoreOverrideCursor()
@@ -1088,7 +1035,7 @@ class _SignUpPage(QtWidgets.QWidget):
         try:
             ok, msg = fb.check_entitlement(session, licence)
             if not ok:
-                QtWidgets.QMessageBox.critical(self, "Licence Error", msg)
+                ThemedMessageBox.critical(self, "Licence Error", msg)
                 return
             fb.save_profile(session, {
                 "name": name, "institution": inst, "city": city,
@@ -1096,13 +1043,13 @@ class _SignUpPage(QtWidgets.QWidget):
                 "licenceKey": licence,
             })
         except fb.AuthError as exc:
-            QtWidgets.QMessageBox.critical(self, "Sign Up Failed", str(exc))
+            ThemedMessageBox.critical(self, "Sign Up Failed", str(exc))
             return
 
         # Nothing to set up for backups any more: Storage folders come into
         # being with the first upload, so there is no folder-creation call to
         # wait on here.
-        QtWidgets.QMessageBox.information(
+        ThemedMessageBox.information(
             self, "Account Created",
             "Account created and licence activated. Please sign in.")
         self.signup_done.emit()
@@ -1169,7 +1116,7 @@ class _ComPortPage(QtWidgets.QWidget):
                 border-radius: 5px; font-size: 12px;
                 font-weight: bold; min-width: 80px;
             }}
-            QPushButton:hover {{ background: #5eead4; }}
+            QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
         """)
         refresh_btn.clicked.connect(self._refresh)
         connect_btn.clicked.connect(self._connect)
@@ -1284,7 +1231,7 @@ class LoginWindow(QtWidgets.QDialog):
         self.setWindowFlags(
             QtCore.Qt.Dialog |
             QtCore.Qt.WindowCloseButtonHint)
-        self.setStyleSheet(_BASE_STYLE + f"""
+        self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
@@ -1418,7 +1365,7 @@ class LoginWindow(QtWidgets.QDialog):
 
     def _on_port_selected(self, port: str):
         if port == "No ports found" or not port:
-            QtWidgets.QMessageBox.warning(
+            ThemedMessageBox.warning(
                 self, "No Port",
                 "No COM port selected. Please connect the device and refresh.")
             return
@@ -1441,7 +1388,7 @@ class ComPortSelector(QtWidgets.QDialog):
         super().__init__()
         self.setWindowTitle("APEX Ground Control Station")
         self.setFixedSize(420, 280)
-        self.setStyleSheet(_BASE_STYLE + f"""
+        self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background-color: {_BG};
                 border: 1px solid {_BORDER};
@@ -1511,7 +1458,7 @@ class ComPortSelector(QtWidgets.QDialog):
                 min-width: 80px;
             }}
             QPushButton:hover {{
-                background: #5eead4;
+                background: {theme.GRADIENT_COOL};
             }}
         """)
 
@@ -1624,7 +1571,12 @@ class ThemedMessageBox(QtWidgets.QDialog):
         self.setWindowTitle(title)
         self.setModal(True)
         self.setMinimumWidth(420)
-        self.setStyleSheet(_BASE_STYLE + f"""
+        # Word wrap on the labels below only takes effect once something
+        # constrains the width. Without a maximum, a long informative string —
+        # a full save path, a stack-trace message — produced one unbroken line
+        # and a dialog wider than the screen.
+        self.setMaximumWidth(580)
+        self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background-color: {_BG};
                 border: 1px solid {_BORDER};
@@ -1662,7 +1614,7 @@ class ThemedMessageBox(QtWidgets.QDialog):
         # ── Main text ─────────────────────────────────────────────────────────
         msg_lbl = QtWidgets.QLabel(text)
         msg_lbl.setWordWrap(True)
-        msg_lbl.setStyleSheet(f"color: {_TEXT}; font-size: 13px; line-height: 1.5;")
+        msg_lbl.setStyleSheet(f"color: {_TEXT}; font-size: {theme.FS_BODY}px;")
         root.addWidget(msg_lbl)
 
         if informative:
@@ -1756,7 +1708,7 @@ class _MyBackupsDialog(QtWidgets.QDialog):
         self.setWindowTitle("APEX GCS — My Backups")
         self.setMinimumSize(720, 460)
         self.setModal(True)
-        self.setStyleSheet(_BASE_STYLE)
+        self.setStyleSheet(_base_style())
         self._files = []
         self._busy = False
         self._build()
@@ -1810,12 +1762,11 @@ class _MyBackupsDialog(QtWidgets.QDialog):
         row.addWidget(self._dl_btn)
 
         self._del_btn = QtWidgets.QPushButton("Delete Selected")
-        self._del_btn.setMinimumHeight(32)
-        self._del_btn.setStyleSheet(
-            "QPushButton { background:#3a1414; color:#ff8080;"
-            f" border:1px solid #6b2020; border-radius:6px; padding:6px 14px; }}"
-            "QPushButton:hover { background:#4d1a1a; }"
-            f"QPushButton:disabled {{ color:{_MUTED}; border-color:{_BORDER}; background:{_SURFACE}; }}")
+        self._del_btn.setMinimumHeight(34)
+        # Was a third hardcoded red, built from a mix of plain and f-strings
+        # so half the placeholders never interpolated. The shared danger rule
+        # in theme.qss() covers it.
+        self._del_btn.setObjectName("dangerBtn")
         self._del_btn.clicked.connect(self._delete_checked)
         row.addWidget(self._del_btn)
 
@@ -2067,7 +2018,7 @@ class UserProfileDialog(QtWidgets.QDialog):
         self.setModal(True)
         self.setWindowFlags(
             QtCore.Qt.Dialog | QtCore.Qt.WindowCloseButtonHint)
-        self.setStyleSheet(_BASE_STYLE + f"""
+        self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
@@ -2365,30 +2316,24 @@ class UserProfileDialog(QtWidgets.QDialog):
         _MyBackupsDialog(self).exec_()
 
     def _open_support(self):
-        """
-        Open Gmail's compose window addressed to APEX support.
+        """Open the APEX website contact page with user details pre-filled."""
+        name = self._value_labels.get("Name", None)
+        name = name.text() if name and name.text() != "—" else ""
+        email = self._email or ""
 
-        Gmail's web compose rather than mailto:, which hands off to whatever
-        desktop mail client happens to be registered — often none at all, in
-        which case clicking appears to do nothing. Matches the support button
-        in the licence email.
-        """
-        body = (
-            "Describe the problem here.\n\n"
-            "----------------------------------------\n"
-            "Account: " + (self._email or "unknown") + "\n"
-        )
-        url = (
-            "https://mail.google.com/mail/?view=cm&fs=1"
-            "&to=" + QtCore.QUrl.toPercentEncoding(SUPPORT_EMAIL).data().decode()
-            + "&su=" + QtCore.QUrl.toPercentEncoding("APEX GCS support").data().decode()
-            + "&body=" + QtCore.QUrl.toPercentEncoding(body).data().decode()
-        )
-        if not QtGui.QDesktopServices.openUrl(QtCore.QUrl(url)):
-            # No browser could be launched, so give them the address to use.
+        url = QtCore.QUrl("https://theapex.site/contact.html")
+        query = QtCore.QUrlQuery()
+        query.addQueryItem("form", "report-issue")
+        if name:
+            query.addQueryItem("name", name)
+        if email:
+            query.addQueryItem("email", email)
+        url.setQuery(query)
+
+        if not QtGui.QDesktopServices.openUrl(url):
             ThemedMessageBox.information(
                 self, "Need Help?",
-                "Email " + SUPPORT_EMAIL,
+                "Visit https://theapex.site/contact.html",
                 "A browser could not be opened automatically.")
 
     def _do_logout(self):

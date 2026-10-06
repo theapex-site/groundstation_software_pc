@@ -1,11 +1,16 @@
 """
 config.py
 ─────────
-Global constants, style sheet, and shared settings for APEX GCS.
-Edit this file to change colours, fonts, thresholds, or baud rate.
+Global constants and shared settings for APEX GCS.
+Edit this file to change thresholds, timeouts or the baud rate.
+
+Colours, fonts, radii and the stylesheet live in theme.py.
 """
 import os
 import sys
+
+APP_VERSION = "1.0.1"
+GITHUB_REPO = "theapex-site/groundstation_software_pc"
 
 def resource_path(relative_path):
     try:
@@ -47,74 +52,7 @@ POPUP_SYNC_MS           = 200  # how often the popup mirrors the mini graph
 DEFAULT_LAT = 13.017812
 DEFAULT_LON = 77.514813
 
-# ── Qt stylesheet ─────────────────────────────────────────────────────────────
-STYLE = """
-QMainWindow { background: transparent; color: #f5f0e6; font-family: Consolas; }
-
-#TelemetryPanel {
-    border:1px solid #1a1a2e;
-    border-radius:10px;
-    background: #08080f;
-}
-
-#mainTitle {
-    color:#2dd4bf;
-    font-size:20px;
-    font-weight:bold;
-    padding:6px;
-}
-
-#groupBox {
-    border:1px solid #1a1a2e;
-    border-radius:8px;
-    background: #0d0d18;
-    margin-top:8px;
-    padding:6px;
-    color:#5eead4;
-    font-weight:bold;
-}
-
-#nameLabel { color:#94a3b8; font-size:12px; }
-#valueLabel { color:#f5f0e6; font-size:12px; font-weight:bold; }
-
-QTextEdit {
-    background: #000000;
-    color:#22c55e;
-    border:1px solid #1a1a2e;
-    font-size:11px;
-}
-
-QPushButton {
-    background:#1a1a2e;
-    color:#2dd4bf;
-    border:1px solid #2dd4bf;
-    padding:5px;
-    border-radius:5px;
-}
-QPushButton:hover {
-    background:#2dd4bf;
-    color:#000000;
-}
-
-QProgressBar {
-    border: 1px solid #1a1a2e;
-    border-radius: 6px;
-    text-align: center;
-    background-color: #08080f;
-    color: #f5f0e6;
-    height: 18px;
-    font-size: 11px;
-}
-QProgressBar::chunk {
-    background-color: #2dd4bf;
-    border-radius: 6px;
-}
-
-QToolTip {
-    background-color: #000000;
-    color: #2dd4bf;
-    border: 1px solid #2dd4bf;
-    padding: 4px;
-    font-size: 11px;
-}
-"""
+# ── Appearance ────────────────────────────────────────────────────────────────
+# The stylesheet used to live here, as a fourth copy of a palette that also
+# existed in dialogs.py, ground_station.py and object_detection.py. It is now
+# in theme.py, which all four read from. See theme.qss().
