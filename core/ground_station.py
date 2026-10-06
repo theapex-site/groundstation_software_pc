@@ -92,14 +92,29 @@ class GroundStation(QtWidgets.QMainWindow):
         self.image_done_signal.connect(self._show_image_result)
         self.progress_signal.connect(self._update_progress)
 
+        # ── Session accounting ────────────────────────────────────────────────
+        self._session_start    = time.monotonic()
+        self._packet_count     = 0
+        self._last_packet_time = None     # None until the first packet lands
+        self._recent_packets   = []       # monotonic stamps, for the rate
+
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
 
         # ── Link status blink ─────────────────────────────────────────────────
-        self.is_connected = True
+        # Starts disconnected. It used to start True while the label read
+        # "LINK NOT CONNECTED", so the window opened asserting both at once.
+        self.is_connected = False
         self.blink_state  = True
         self.blink_timer  = QtCore.QTimer()
         self.blink_timer.timeout.connect(self._blink_link_status)
+
+        # Drives the mission clock, the packet rate and — the point of it —
+        # the data-age readout that tells the operator whether what is on
+        # screen is still worth believing.
+        self.heartbeat = QtCore.QTimer(self)
+        self.heartbeat.timeout.connect(self._tick_session)
+        self.heartbeat.start(1000)
 
         # ── Serial connection ─────────────────────────────────────────────────
         self._open_serial()
@@ -166,41 +181,85 @@ class GroundStation(QtWidgets.QMainWindow):
         header_row.addWidget(cubesat_lbl)
         cl.addLayout(header_row)
 
-        # COM label
-        self.com_label = QtWidgets.QLabel(f"COM: {self.com_port}")
-        self.com_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.com_label.setStyleSheet("color:#2dd4bf; font-size:12px; font-weight:bold;")
-        cl.addWidget(self.com_label)
+        # ── Status strip: port, link, and how the session is going ────────────
+        # Mission clock, packet count and rate were all being tracked already
+        # and never shown, so an operator could not tell a degrading link
+        # (1 Hz falling to 0.2 Hz) from a healthy one until it dropped out.
+        status_row = QtWidgets.QHBoxLayout()
+        status_row.setSpacing(10)
 
-        # Signal row
-        signal_row = QtWidgets.QHBoxLayout()
-        self.rssi_label  = QtWidgets.QLabel("RSSI: -- dBm")
-        self.link_status = QtWidgets.QLabel("● LINK NOT CONNECTED")
-        self.snr_label   = QtWidgets.QLabel("SNR: -- dB")
-        self.rssi_label.setStyleSheet("color:#94a3b8; font-size:11px;")
-        self.snr_label.setStyleSheet("color:#94a3b8; font-size:11px;")
-        self.link_status.setStyleSheet("color:#ef4444; font-size:11px; font-weight:bold;")
-        signal_row.setSpacing(20)
-        for w in (self.rssi_label, self.link_status, self.snr_label):
-            signal_row.addWidget(w)
+        self.com_label = QtWidgets.QLabel(f"COM {self.com_port}")
+        self.com_label.setObjectName("statChip")
+
+        self.link_status = QtWidgets.QLabel("● ACQUIRING")
+        self.link_status.setObjectName("linkChip")
+        self.link_status.setProperty("state", "acquiring")
+        self.link_status.setFixedWidth(190)
+        self.link_status.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.rssi_label = QtWidgets.QLabel("RSSI —")
+        self.rssi_label.setObjectName("statChip")
+        self.snr_label = QtWidgets.QLabel("SNR —")
+        self.snr_label.setObjectName("statChip")
+        self.clock_label = QtWidgets.QLabel("T+00:00:00")
+        self.clock_label.setObjectName("statChip")
+        self.packets_label = QtWidgets.QLabel("0 PKT")
+        self.packets_label.setObjectName("statChip")
+        self.rate_label = QtWidgets.QLabel("— Hz")
+        self.rate_label.setObjectName("statChip")
+
+        status_row.addStretch()
+        for w in (self.com_label, self.link_status, self.rssi_label,
+                  self.snr_label, self.clock_label, self.packets_label,
+                  self.rate_label):
+            status_row.addWidget(w)
+        status_row.addStretch()
+
         sig_container = QtWidgets.QWidget()
-        sig_container.setLayout(signal_row)
-        cl.addWidget(sig_container, alignment=QtCore.Qt.AlignCenter)
+        sig_container.setLayout(status_row)
+        cl.addWidget(sig_container)
 
         # Payload heading
         payload_title = QtWidgets.QLabel("PAYLOAD IMAGE DOWNLINK")
+        payload_title.setObjectName("mainTitle")
         payload_title.setAlignment(QtCore.Qt.AlignCenter)
-        payload_title.setStyleSheet("font-size:18px; color:#5eead4; font-weight:bold;")
         cl.addWidget(payload_title)
 
-        # Progress bar
+        # Progress bar. Hidden when idle rather than left showing the last
+        # transfer's state, and the caption sits beside it rather than under
+        # the chunk, where it was half-legible on the fill boundary.
+        prog_row = QtWidgets.QHBoxLayout()
+        prog_row.setSpacing(12)
         self.progress = QtWidgets.QProgressBar()
+        self.progress.setTextVisible(False)
         self.progress.setMaximum(100)
-        self.progress.setFormat("Packets: 0/100 (0%)")
-        cl.addWidget(self.progress)
+        self.progress.setValue(0)
+        self.progress_caption = QtWidgets.QLabel("")
+        self.progress_caption.setObjectName("statChip")
+        self.cancel_btn = QtWidgets.QPushButton("Cancel downlink")
+        self.cancel_btn.setObjectName("dangerBtn")
+        self.cancel_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self.cancel_btn.clicked.connect(self._cancel_downlink)
+        prog_row.addWidget(self.progress, 1)
+        prog_row.addWidget(self.progress_caption)
+        prog_row.addWidget(self.cancel_btn)
+        self.progress_row = QtWidgets.QWidget()
+        self.progress_row.setLayout(prog_row)
+        self.progress_row.hide()
+        cl.addWidget(self.progress_row)
 
         # Image display
-        self.image_label = QtWidgets.QLabel("NO IMAGE RECEIVED")
+        # An empty state that says what to do next, rather than a bare
+        # "NO IMAGE RECEIVED" in whatever the default font was.
+        self._image_empty_html = (
+            f"<div align='center' style='color:{theme.SLATE}'>"
+            f"<span style='font-size:{theme.FS_HEAD}px; font-weight:600;'>"
+            "No payload image yet</span><br><br>"
+            f"<span style='font-size:{theme.FS_BODY}px;'>Press "
+            f"<span style='color:{theme.TEAL}'>Transmit Image</span> to downlink "
+            "the latest capture</span></div>"
+        )
+        self.image_label = QtWidgets.QLabel(self._image_empty_html)
         self.image_label.setScaledContents(False)
         self.image_label.setAlignment(QtCore.Qt.AlignCenter)
         self.image_label.setStyleSheet(
@@ -468,6 +527,7 @@ class GroundStation(QtWidgets.QMainWindow):
             return
         try:
             self._append_telemetry_row(parts)
+            self._note_packet()
 
             self.telemetry.update_telemetry(
                 cubesat_id=parts[1],  date=parts[2],    time=parts[3],
@@ -522,6 +582,19 @@ class GroundStation(QtWidgets.QMainWindow):
         if cmd.strip() == "A":
             self.manual_reconnect_serial()
             return
+
+        # A downlink takes the serial port for up to IMAGE_MODE_TIMEOUT with
+        # telemetry stopped. That is worth saying out loud before it starts.
+        if cmd.strip() == "S":
+            mins, secs = divmod(IMAGE_MODE_TIMEOUT, 60)
+            if ThemedMessageBox.question(
+                    self, "Transmit Image",
+                    "Start the payload image downlink?",
+                    informative=(f"Live telemetry pauses for the transfer — up to "
+                                 f"{mins}m {secs:02d}s. You can cancel at any point."),
+                    buttons=["Start downlink", "Cancel"]) != "Start downlink":
+                return
+
         try:
             if self.serial_port and self.serial_port.is_open:
                 self.serial_port.write(cmd.encode())
@@ -547,9 +620,35 @@ class GroundStation(QtWidgets.QMainWindow):
         self.received_packets    = 0
         self.expected_image_size = 0
         self.image_start_time    = time.time()
-        self.progress.setValue(0)
+        self._downlink_cancelled = False
+
+        # Phase one can wait up to FILE_INFO_TIMEOUT seconds for the header.
+        # The bar used to sit at zero showing a hardcoded "Packets: 0/100",
+        # which both claimed a transfer size nothing had announced yet and
+        # gave no way to tell waiting from hung.
+        self.progress.setRange(0, 0)          # indeterminate
+        self.progress_caption.setText("Waiting for file header…")
+        self.progress_row.show()
+        self.cancel_btn.setEnabled(True)
         self.serial_port.reset_input_buffer()
         threading.Thread(target=self._receive_image_chunked, daemon=True).start()
+
+    def _cancel_downlink(self):
+        """
+        Abort a transfer in progress.
+
+        A downlink holds the serial port for up to IMAGE_MODE_TIMEOUT — two
+        and a half minutes — with telemetry stopped, and there was no way to
+        get out of it. The receive loop already checks self.receiving_image
+        every iteration, so clearing it is all cancellation needs.
+        """
+        if not self.receiving_image:
+            return
+        self.cancel_btn.setEnabled(False)
+        self.progress_caption.setText("Cancelling…")
+        self._downlink_cancelled = True
+        self.receiving_image = False
+        self.telemetry.update_flag("GCS_DOWNLINK_CANCELLED")
 
     def _exit_image_mode(self, final_image: bytearray):
         """
@@ -702,9 +801,13 @@ class GroundStation(QtWidgets.QMainWindow):
                     self.serial_port.write(f"ACK:{packet_id}\n".encode())
                     last_pkt_time = time.time()
                     print(f"✅ Packet {packet_id} OK — {total_bytes} bytes total")
+                    spent = time.time() - mode_start
+                    remaining = self.total_packets - self.received_packets
+                    eta = (spent / self.received_packets) * remaining if self.received_packets else 0
                     self.progress_signal.emit(
                         self.received_packets,
-                        f"Packets: {self.received_packets}/{self.total_packets} | {total_bytes} bytes",
+                        f"Packet {self.received_packets}/{self.total_packets}  ·  "
+                        f"{total_bytes / 1024:.1f} KB  ·  about {eta:.0f}s left",
                     )
                     if self.received_packets >= self.total_packets:
                         print("✅ All packets received!")
@@ -800,23 +903,41 @@ class GroundStation(QtWidgets.QMainWindow):
             print("Display render error:", e)
 
     def _show_image_result(self, success: bool, received: int, expected: int):
-        if success:            
+        self.progress_row.hide()
+        elapsed = time.time() - (self.image_start_time or time.time())
+
+        if getattr(self, "_downlink_cancelled", False):
+            self.show_toast("Downlink cancelled", kind="warn")
+            return
+
+        if success:
             if expected > 0 and received < expected * 0.95:
+                pct = received * 100 / expected
                 ThemedMessageBox.warning(
                     self, "Partial Image Received",
-                    "Only part of the image was received.",
-                    informative=f"Received: {received} bytes  /  Expected: {expected} bytes",
-                )                
+                    f"Only {pct:.0f}% of the image arrived.",
+                    informative=f"Received {received:,} of {expected:,} bytes in "
+                                f"{elapsed:.0f}s. The missing rows show as flat grey.",
+                )
+            else:
+                # The happy path used to be completely silent: the picture
+                # simply appeared, with no confirmation of what had been
+                # received or how long it took.
+                self.show_toast(
+                    f"Image received · {received / 1024:.1f} KB · {elapsed:.0f}s",
+                    kind="success")
         else:
             ThemedMessageBox.warning(
                 self, "Image Transfer Failed",
-                "No image data received from CubeSat.",
-                informative="Check link quality or retry transmission.",
+                "No image data was received.",
+                informative="Check the link quality and try the downlink again.",
             )
 
     def _update_progress(self, value: int, text: str):
+        if self.progress.maximum() == 0 and self.total_packets:
+            self.progress.setRange(0, self.total_packets)
         self.progress.setValue(value)
-        self.progress.setFormat(text)
+        self.progress_caption.setText(text)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Link status
@@ -826,24 +947,70 @@ class GroundStation(QtWidgets.QMainWindow):
         if connected:
             self.blink_timer.stop()
             self.link_status.setText("● LINK STABLE")
-            self.link_status.setStyleSheet("color:#22c55e; font-size:11px; font-weight:bold;")
-            if snr  is not None: self.snr_label.setText(f"SNR: {snr} dB")
-            if rssi is not None: self.rssi_label.setText(f"RSSI: {rssi} dBm")
+            self.link_status.setProperty("state", "stable")
+            if snr  is not None: self.snr_label.setText(f"SNR {snr} dB")
+            if rssi is not None: self.rssi_label.setText(f"RSSI {rssi} dBm")
         else:
-            self.link_status.setText("● SIGNAL LOST  ")
+            self.link_status.setText("● SIGNAL LOST")
+            self.link_status.setProperty("state", "lost")
             self.blink_timer.start(500)
-            self.snr_label.setText("SNR: --")
-            self.rssi_label.setText("RSSI: --")
+            self.snr_label.setText("SNR —")
+            self.rssi_label.setText("RSSI —")
+        theme.repolish(self.link_status)
         ts = datetime.now().strftime("%H:%M:%S")
         self._append_link_row(ts, connected,
                               rssi if rssi is not None else "--",
                               snr  if snr  is not None else "--")
 
     def _blink_link_status(self):
-        if not self.is_connected:
-            colour = "#ef4444" if self.blink_state else "#000000"
-            self.link_status.setStyleSheet(f"color:{colour}; font-size:11px; font-weight:bold;")
-            self.blink_state = not self.blink_state
+        """
+        Pulse the lost-signal chip.
+
+        The old version alternated the text to #000000, which against the
+        animated starfield read as a rendering glitch rather than an alarm.
+        It now alternates between the alarm colour and a dim red, so the
+        glyph stays legible throughout.
+        """
+        if self.is_connected:
+            return
+        self.blink_state = not self.blink_state
+        self.link_status.setProperty("state", "lost" if self.blink_state else "blink")
+        theme.repolish(self.link_status)
+
+    # ══════════════════════════════════════════════════════════════════════════
+    #  Session heartbeat
+    # ══════════════════════════════════════════════════════════════════════════
+    def _tick_session(self):
+        """Once a second: mission clock, packet rate, and the data-age readout."""
+        elapsed = int(time.monotonic() - self._session_start)
+        h, rem = divmod(elapsed, 3600)
+        m, s = divmod(rem, 60)
+        self.clock_label.setText(f"T+{h:02d}:{m:02d}:{s:02d}")
+
+        self.packets_label.setText(f"{self._packet_count} PKT")
+
+        # Rate over the trailing ten seconds, so a slowdown shows up long
+        # before the link actually drops.
+        now = time.monotonic()
+        self._recent_packets = [t for t in self._recent_packets if now - t <= 10.0]
+        if len(self._recent_packets) >= 2:
+            span = self._recent_packets[-1] - self._recent_packets[0]
+            rate = (len(self._recent_packets) - 1) / span if span > 0 else 0.0
+            self.rate_label.setText(f"{rate:.2f} Hz")
+        elif self._last_packet_time is None:
+            self.rate_label.setText("— Hz")
+        else:
+            self.rate_label.setText("0.00 Hz")
+
+        age = None if self._last_packet_time is None else now - self._last_packet_time
+        self.telemetry.set_data_age(age)
+
+    def _note_packet(self):
+        """Record that a telemetry packet just arrived."""
+        now = time.monotonic()
+        self._packet_count += 1
+        self._last_packet_time = now
+        self._recent_packets.append(now)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Misc
@@ -875,8 +1042,11 @@ class GroundStation(QtWidgets.QMainWindow):
         import sys, os
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
-    def show_toast(self, text: str):
-        self.toast = Toast(self, text)
+    def show_toast(self, text: str, kind: str = "info"):
+        # Toast keeps its own stack per window, so no reference is held here.
+        # Assigning to self.toast used to drop the previous one without
+        # closing it, leaving two drawn exactly on top of each other.
+        Toast(self, text, kind)
 
     def _open_graph_popup(self, graph_widget: MiniGraph):
         popup = GraphPopup(graph_widget)

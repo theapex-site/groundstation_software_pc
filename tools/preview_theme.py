@@ -50,13 +50,24 @@ def build(window):
     root.setContentsMargins(22, 22, 22, 22)
     root.setSpacing(16)
 
-    panel = TelemetryPanel()
-    panel.setFixedWidth(400)
-    panel.update_telemetry(**SAMPLE)
-    for line in ("CS_BOOT_OK", "GCS_CMD_C", "CS_IMG_READY", "CS_GPS_TIMEOUT"):
-        panel.update_flag(line)
-    theme.shadow(panel)
-    root.addWidget(panel)
+    # Two panels side by side: the same readings live, and frozen. The point
+    # of the staleness work is that these must not look alike.
+    for age, caption in ((0, "live"), (47, "no signal · readings withdrawn")):
+        wrap = QtWidgets.QVBoxLayout()
+        tag = QtWidgets.QLabel(caption.upper())
+        tag.setObjectName("statChip")
+        tag.setAlignment(QtCore.Qt.AlignCenter)
+        wrap.addWidget(tag)
+
+        panel = TelemetryPanel()
+        panel.setFixedWidth(400)
+        panel.update_telemetry(**SAMPLE)
+        for line in ("CS_BOOT_OK", "GCS_CMD_C", "CS_IMG_READY", "CS_GPS_TIMEOUT"):
+            panel.update_flag(line)
+        panel.set_data_age(age)
+        theme.shadow(panel)
+        wrap.addWidget(panel)
+        root.addLayout(wrap)
 
     right = QtWidgets.QWidget()
     col = QtWidgets.QVBoxLayout(right)
@@ -66,10 +77,20 @@ def build(window):
     title.setObjectName("mainTitle")
     col.addWidget(title)
 
+    # As the real downlink shows it: caption beside the bar, not under the
+    # chunk where it was half-legible across the fill boundary.
+    prog = QtWidgets.QHBoxLayout()
     bar = QtWidgets.QProgressBar()
+    bar.setTextVisible(False)
     bar.setValue(63)
-    bar.setFormat("Packet 79 / 126")
-    col.addWidget(bar)
+    caption = QtWidgets.QLabel("Packet 79/126  ·  16.5 KB  ·  about 14s left")
+    caption.setObjectName("statChip")
+    cancel = QtWidgets.QPushButton("Cancel downlink")
+    cancel.setObjectName("dangerBtn")
+    prog.addWidget(bar, 1)
+    prog.addWidget(caption)
+    prog.addWidget(cancel)
+    col.addLayout(prog)
 
     # ── buttons, every state the sheet defines ────────────────────────────────
     primary = QtWidgets.QPushButton("Connect to COM4")

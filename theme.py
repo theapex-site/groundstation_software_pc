@@ -161,6 +161,15 @@ def init(app: QtWidgets.QApplication) -> None:
         app.setWindowIcon(QtGui.QIcon(icon_path))
 
 
+def repolish(*widgets: QtWidgets.QWidget) -> None:
+    """Re-apply the stylesheet after a property a selector depends on changed."""
+    for w in widgets:
+        if w is None:
+            continue
+        w.style().unpolish(w)
+        w.style().polish(w)
+
+
 def shadow(widget: QtWidgets.QWidget, blur: int = 34, dy: int = 10,
            alpha: int = 130) -> None:
     """
@@ -255,6 +264,86 @@ QToolTip {{
 #valueLabel[state="warn"]  {{ color: {WARN}; }}
 #valueLabel[state="alarm"] {{ color: {ALARM}; }}
 #valueLabel[state="stale"] {{ color: {DIM}; }}
+
+#unitLabel {{
+    font-family: "{MONO}";
+    color: {SLATE};
+    font-size: {FS_LABEL}px;
+}}
+#unitLabel[state="stale"] {{ color: {DIM}; }}
+
+/* Health is carried twice: a stripe down the left of the row and a
+   direction glyph beside the value. Colour alone fails for red-green
+   colour blindness, in a greyscale screenshot and on a projector. */
+#rowStripe {{
+    min-width: 3px; max-width: 3px;
+    border-radius: 2px;
+    background: {LINE};
+}}
+#rowStripe[state="ok"]    {{ background: {OK}; }}
+#rowStripe[state="warn"]  {{ background: {WARN}; }}
+#rowStripe[state="alarm"] {{ background: {ALARM}; }}
+#rowStripe[state="stale"] {{ background: #2a3044; }}
+
+#rowGlyph {{
+    font-family: "{MONO}";
+    font-size: {FS_MICRO}px;
+    color: transparent;
+}}
+#rowGlyph[state="warn"]  {{ color: {WARN}; }}
+#rowGlyph[state="alarm"] {{ color: {ALARM}; }}
+
+/* Data age, in the telemetry panel heading. */
+#agePill {{
+    font-family: "{MONO}";
+    font-size: {FS_MICRO}px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: {R_PILL}px;
+    background: {RAISED};
+    border: 1px solid {LINE};
+    color: {SLATE};
+}}
+#agePill[state="live"]  {{ color: {OK};    border-color: {OK}; }}
+#agePill[state="stale"] {{ color: {WARN};  border-color: {WARN}; }}
+#agePill[state="lost"]  {{ color: {ALARM}; border-color: {ALARM}; }}
+
+/* Session chips beside the payload heading: port, signal, clock, packets. */
+#statChip {{
+    font-family: "{MONO}";
+    font-size: {FS_LABEL}px;
+    color: {SLATE};
+    background: {RAISED};
+    border: 1px solid {LINE};
+    border-radius: {R_PILL}px;
+    padding: 5px 12px;
+}}
+#linkChip {{
+    font-family: "{MONO}";
+    font-size: {FS_LABEL}px;
+    font-weight: 600;
+    border-radius: {R_PILL}px;
+    padding: 5px 12px;
+    background: {RAISED};
+    border: 1px solid {LINE};
+    color: {SLATE};
+}}
+#linkChip[state="stable"]    {{ color: {OK};    border-color: {OK}; }}
+#linkChip[state="acquiring"] {{ color: {SLATE}; border-color: {LINE}; }}
+#linkChip[state="lost"]      {{ color: {ALARM}; border-color: {ALARM}; }}
+#linkChip[state="blink"]     {{ color: {ALARM_EDGE}; border-color: {ALARM_EDGE}; }}
+
+/* The banner that says why a reading cannot be trusted. */
+#staleBanner {{
+    background: {RAISED};
+    border: 1px solid {LINE};
+    border-radius: {R_CTRL}px;
+    color: {SLATE};
+    font-size: {FS_LABEL}px;
+    padding: 8px 11px;
+}}
+#staleBanner[state="stale"] {{ color: {WARN}; border-color: {WARN}; }}
+#staleBanner[state="lost"]  {{ color: {ALARM}; border-color: {ALARM}; }}
 
 /* ── Text areas ─────────────────────────────────────────────────────────── */
 QTextEdit {{

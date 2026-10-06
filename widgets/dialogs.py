@@ -1487,19 +1487,25 @@ class ComPortSelector(QtWidgets.QDialog):
 class Toast(QtWidgets.QFrame):
     """Transient themed notification — appears bottom-right, auto-closes."""
 
-    def __init__(self, parent: QtWidgets.QWidget, text: str):
+    _EDGE = {"info": _ACCENT, "success": _GREEN, "warn": _YELLOW, "error": _RED}
+
+    # Live toasts per parent window, oldest first.
+    _stacks: dict = {}
+
+    def __init__(self, parent: QtWidgets.QWidget, text: str, kind: str = "info"):
         super().__init__(parent)
+        edge = self._EDGE.get(kind, _ACCENT)
+
         self.setStyleSheet(f"""
             QFrame {{
-                background-color: {_SURFACE};
-                border: 1px solid {_ACCENT};
+                background-color: {_RAISED};
+                border: 1px solid {edge};
                 border-radius:{theme.R_CARD}px;
             }}
             QLabel {{
-                color: {_ACCENT};
-                font-family: Consolas;
-                font-size: 12px;
-                padding: 10px 14px;
+                color: {_TEXT};
+                font-size: {theme.FS_BODY}px;
+                padding: 11px 15px;
             }}
         """)
 
@@ -1507,19 +1513,34 @@ class Toast(QtWidgets.QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
 
         dot = QtWidgets.QLabel("●")
-        dot.setStyleSheet(f"color: {_GREEN}; padding-left: 12px; padding-right: 4px;")
+        dot.setStyleSheet(f"color: {edge}; padding-left: 14px; padding-right: 2px;")
         layout.addWidget(dot)
-
-        msg = QtWidgets.QLabel(text)
-        layout.addWidget(msg)
+        layout.addWidget(QtWidgets.QLabel(text))
 
         self.adjustSize()
-        pr = parent.rect()
-        self.move(pr.width() - self.width() - 20,
-                  pr.height() - self.height() - 20)
+        Toast._stacks.setdefault(id(parent), []).append(self)
+        self._restack(parent)
+
         self.raise_()
         self.show()
-        QtCore.QTimer.singleShot(2500, self.close)
+        QtCore.QTimer.singleShot(2800, self.close)
+
+    @staticmethod
+    def _restack(parent):
+        """Lay the live toasts out upward from the bottom-right corner."""
+        y = parent.rect().height() - 20
+        for toast in reversed(Toast._stacks.get(id(parent), [])):
+            y -= toast.height()
+            toast.move(parent.rect().width() - toast.width() - 20, y)
+            y -= 8
+
+    def closeEvent(self, event):
+        stack = Toast._stacks.get(id(self.parent()), [])
+        if self in stack:
+            stack.remove(self)
+            self._restack(self.parent())
+        self.deleteLater()
+        super().closeEvent(event)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
