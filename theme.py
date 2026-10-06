@@ -221,8 +221,10 @@ QToolTip {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
     left: 14px;
-    padding: 0 6px;
-    background: {RAISED};
+    padding: 3px 10px;
+    background: {PANEL};
+    border: 1px solid {LINE};
+    border-radius: {R_PILL}px;
     color: {SLATE};
 }}
 

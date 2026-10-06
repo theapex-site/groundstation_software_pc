@@ -7,6 +7,8 @@ flag monitor, and colour-coded health indicators.
 import math
 from datetime import datetime
 from PyQt5 import QtWidgets, QtCore
+
+import theme
 from config import DEGREE
 
 
@@ -30,25 +32,29 @@ class TelemetryPanel(QtWidgets.QFrame):
         title.setAlignment(QtCore.Qt.AlignCenter)
 
         settings_btn = QtWidgets.QPushButton("⚙")
-        settings_btn.setFixedSize(32, 32)
+        # Set before the stylesheet: an ID rule applied to a widget that does
+        # not carry the id yet is not guaranteed to be re-evaluated.
+        settings_btn.setObjectName("settingsBtn")
+        settings_btn.setFixedSize(34, 34)
         settings_btn.setToolTip("User Profile & Settings")
         settings_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        settings_btn.setStyleSheet("""
-            QPushButton#settingsBtn {
-                background: #08080f;
-                color: #2dd4bf;
-                border: 1px solid #2dd4bf;
-                border-radius: 6px;
+        settings_btn.setStyleSheet(f"""
+            QPushButton#settingsBtn {{
+                background: {theme.RAISED};
+                color: {theme.TEAL};
+                border: 1px solid {theme.LINE};
+                border-radius: 17px;
                 font-size: 16px;
                 padding: 0px;
-                min-width: 32px;
-            }
-            QPushButton#settingsBtn:hover {
-                background: #2dd4bf;
-                color: #000000;
-            }
+                min-width: 34px;
+                text-align: center;
+            }}
+            QPushButton#settingsBtn:hover {{
+                background: {theme.TEAL};
+                color: {theme.DEEP};
+                border-color: {theme.TEAL};
+            }}
         """)
-        settings_btn.setObjectName("settingsBtn")
         settings_btn.clicked.connect(self.settings_clicked.emit)
 
         heading_row.addStretch(1)

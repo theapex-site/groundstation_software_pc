@@ -281,7 +281,7 @@ class _ReauthPage(QtWidgets.QWidget):
         self.auth_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.auth_btn.setStyleSheet(f"""
             QPushButton {{
-                background:{_ACCENT}; color:{_BG}; border:none; border-radius:6px;
+                background:{_ACCENT}; color:{_BG}; border:none; border-radius:{theme.R_CTRL}px;
                 padding:10px; font-size:13px; font-weight:bold;
             }}
             QPushButton:hover {{ background:{theme.GRADIENT_COOL}; }}
@@ -496,7 +496,7 @@ class _LoginPage(QtWidgets.QWidget):
         sign_in_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_ACCENT}; color: {_BG};
-                border: none; border-radius: 5px;
+                border: none; border-radius:{theme.R_CTRL}px;
                 font-size: 13px; font-weight: bold;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
@@ -666,13 +666,13 @@ class TermsDialog(QtWidgets.QDialog):
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius: 10px;
+                border-radius:{theme.R_CARD}px;
             }}
             QTextEdit {{
                 background: {_SURFACE};
                 color: {_TEXT};
                 border: 1px solid {_BORDER};
-                border-radius: 6px;
+                border-radius:{theme.R_CTRL}px;
                 padding: 10px;
                 font-size: 12px;
                 font-family: Consolas;
@@ -680,11 +680,11 @@ class TermsDialog(QtWidgets.QDialog):
             QScrollBar:vertical {{
                 background: {_BG};
                 width: 8px;
-                border-radius: 4px;
+                border-radius:{theme.R_SM}px;
             }}
             QScrollBar::handle:vertical {{
                 background: {_BORDER};
-                border-radius: 4px;
+                border-radius:{theme.R_SM}px;
                 min-height: 20px;
             }}
             QScrollBar::handle:vertical:hover {{
@@ -733,7 +733,7 @@ class TermsDialog(QtWidgets.QDialog):
         ok_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_ACCENT}; color: {_BG};
-                border: none; border-radius: 5px;
+                border: none; border-radius:{theme.R_CTRL}px;
                 font-size: 12px; font-weight: bold;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
@@ -771,7 +771,7 @@ class _SignUpPage(QtWidgets.QWidget):
                 background: {_SURFACE};
                 color: {_TEXT};
                 border: 1.5px solid #1a1a2e;
-                border-radius: 5px;
+                border-radius:{theme.R_CTRL}px;
                 padding: 6px 10px;
                 font-size: 12px;
                 font-family: Consolas;
@@ -820,7 +820,7 @@ class _SignUpPage(QtWidgets.QWidget):
                 background: {_SURFACE};
                 color: {_TEXT};
                 border: 1.5px solid #1a1a2e;
-                border-radius: 5px;
+                border-radius:{theme.R_CTRL}px;
                 padding: 6px 10px;
                 font-size: 14px;
                 font-family: Consolas;
@@ -922,7 +922,7 @@ class _SignUpPage(QtWidgets.QWidget):
         self.signup_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_ACCENT}; color: {_BG};
-                border: none; border-radius: 5px;
+                border: none; border-radius:{theme.R_CTRL}px;
                 font-size: 13px; font-weight: bold;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
@@ -1113,7 +1113,7 @@ class _ComPortPage(QtWidgets.QWidget):
             QPushButton {{
                 background: {_ACCENT}; color: {_BG};
                 border: 1px solid {_ACCENT}; padding: 6px 18px;
-                border-radius: 5px; font-size: 12px;
+                border-radius:{theme.R_CTRL}px; font-size: 12px;
                 font-weight: bold; min-width: 80px;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
@@ -1140,7 +1140,7 @@ class _ComPortPage(QtWidgets.QWidget):
         self._driver_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_SURFACE}; color: {_TEXT};
-                border: 1px solid {_BORDER}; border-radius: 5px;
+                border: 1px solid {_BORDER}; border-radius:{theme.R_CTRL}px;
                 font-size: 11px;
             }}
             QPushButton:hover {{ border-color: {_ACCENT}; color: {_ACCENT}; }}
@@ -1235,7 +1235,7 @@ class LoginWindow(QtWidgets.QDialog):
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius: 12px;
+                border-radius:{theme.R_CARD}px;
             }}
         """)
 
@@ -1392,7 +1392,7 @@ class ComPortSelector(QtWidgets.QDialog):
             QDialog {{
                 background-color: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius: 10px;
+                border-radius:{theme.R_CARD}px;
             }}
         """)
 
@@ -1452,7 +1452,7 @@ class ComPortSelector(QtWidgets.QDialog):
                 color: {_BG};
                 border: 1px solid {_ACCENT};
                 padding: 6px 18px;
-                border-radius: 5px;
+                border-radius:{theme.R_CTRL}px;
                 font-size: 12px;
                 font-weight: bold;
                 min-width: 80px;
@@ -1493,7 +1493,7 @@ class Toast(QtWidgets.QFrame):
             QFrame {{
                 background-color: {_SURFACE};
                 border: 1px solid {_ACCENT};
-                border-radius: 8px;
+                border-radius:{theme.R_CARD}px;
             }}
             QLabel {{
                 color: {_ACCENT};
@@ -1580,7 +1580,7 @@ class ThemedMessageBox(QtWidgets.QDialog):
             QDialog {{
                 background-color: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius: 10px;
+                border-radius:{theme.R_CARD}px;
             }}
         """)
 
@@ -1747,7 +1747,7 @@ class _MyBackupsDialog(QtWidgets.QDialog):
         self._table.setColumnWidth(3, 80)
         self._table.setStyleSheet(f"""
             QTableWidget {{ background:{_BG}; color:{_TEXT}; gridline-color:{_BORDER};
-                            border:1px solid {_BORDER}; border-radius:6px; font-size:11px; }}
+                            border:1px solid {_BORDER}; border-radius:{theme.R_CTRL}px; font-size:11px; }}
             QHeaderView::section {{ background:{_SURFACE}; color:{_MUTED}; border:none;
                                     padding:6px; font-size:10px; }}
             QTableWidget::item:selected {{ background:{_ACCENT}; color:{_BG}; }}
@@ -2022,12 +2022,12 @@ class UserProfileDialog(QtWidgets.QDialog):
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius: 12px;
+                border-radius:{theme.R_CARD}px;
             }}
             QFrame#profileCard {{
                 background: {_SURFACE};
                 border: 1px solid {_BORDER};
-                border-radius: 8px;
+                border-radius:{theme.R_CARD}px;
             }}
             QLabel#fieldKey {{
                 color: {_MUTED};
@@ -2118,8 +2118,8 @@ class UserProfileDialog(QtWidgets.QDialog):
         self._store_bar.setFixedHeight(8)
         self._store_bar.setStyleSheet(f"""
             QProgressBar {{ background:{_BG}; border:1px solid {_BORDER};
-                            border-radius:4px; }}
-            QProgressBar::chunk {{ background:{_ACCENT}; border-radius:4px; }}
+                            border-radius:{theme.R_SM}px; }}
+            QProgressBar::chunk {{ background:{_ACCENT}; border-radius:{theme.R_SM}px; }}
         """)
         store_lay.addWidget(self._store_bar)
 
@@ -2148,7 +2148,7 @@ class UserProfileDialog(QtWidgets.QDialog):
                 background: {_SURFACE};
                 color: {_ACCENT};
                 border: 1px solid {_ACCENT};
-                border-radius: 5px;
+                border-radius:{theme.R_CTRL}px;
                 font-size: 12px;
             }}
             QPushButton:hover {{
@@ -2170,7 +2170,7 @@ class UserProfileDialog(QtWidgets.QDialog):
                 background: {_SURFACE};
                 color: {_RED};
                 border: 1px solid {_RED};
-                border-radius: 5px;
+                border-radius:{theme.R_CTRL}px;
                 font-size: 12px;
             }}
             QPushButton:hover {{
@@ -2187,7 +2187,7 @@ class UserProfileDialog(QtWidgets.QDialog):
                 background: {_SURFACE};
                 color: {_TEXT};
                 border: 1px solid {_BORDER};
-                border-radius: 5px;
+                border-radius:{theme.R_CTRL}px;
                 font-size: 12px;
             }}
             QPushButton:hover {{
@@ -2260,8 +2260,8 @@ class UserProfileDialog(QtWidgets.QDialog):
         colour = "#ef4444" if pct >= 95 else "#facc15" if pct >= 80 else _ACCENT
         self._store_bar.setStyleSheet(f"""
             QProgressBar {{ background:{_BG}; border:1px solid {_BORDER};
-                            border-radius:4px; }}
-            QProgressBar::chunk {{ background:{colour}; border-radius:4px; }}
+                            border-radius:{theme.R_SM}px; }}
+            QProgressBar::chunk {{ background:{colour}; border-radius:{theme.R_SM}px; }}
         """)
         files = int(quota.get("files") or 0)
         last = quota.get("lastUploadAt") or ""

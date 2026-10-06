@@ -490,56 +490,23 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
     def _build_stylesheet(self) -> str:
         B  = self._BG
-        P  = self._PANEL
         BD = self._BORDER
-        AC = self._ACCENT
         FG = self._FG
-        DM = self._DIM
-        BB = self._BTN_BG
-        BH = self._BTN_HOV
-        OR = self._ORANGE
+        # Buttons, inputs, scrollbars, the progress bar and the group-box
+        # title all come from theme.qss() now. What is left is the handful of
+        # rules specific to this dialog.
         return f"""
-        QDialog           {{ background:{B}; color:{FG}; font-family:Consolas; }}
-        QGroupBox         {{
-            border:1px solid {BD}; border-radius:8px;
-            background:{B}; margin-top:10px; padding:6px;
-            color:{AC}; font-weight:bold; font-size:11px;
+        QDialog {{ background:{B}; color:{FG}; }}
+        QTextEdit {{
+            background:{B}; color:{FG}; border:1px solid {BD};
+            border-radius:{theme.R_CTRL}px;
+            font-family:'{theme.MONO}'; font-size:{theme.FS_LABEL}px;
         }}
-        QGroupBox::title  {{ subcontrol-origin:margin; left:10px; padding:0 4px; color:{AC}; }}
-        QLabel#nameLabel  {{ color:{DM}; font-size:11px; }}
-        QLabel#valueLabel {{ color:{FG}; font-size:11px; font-weight:bold; }}
-        QTextEdit         {{
-            background:#000; color:#b0c4de; border:1px solid {BD};
-            font-family:Consolas; font-size:10px;
-        }}
-        QPushButton {{
-            background:{BB}; color:{AC}; border:1px solid {AC};
-            padding:6px 14px; border-radius:5px; font-family:Consolas;
-            font-size:11px; font-weight:bold;
-        }}
-        QPushButton:hover {{ background:{BH}; color:{B}; }}
-        QPushButton:disabled {{ background:#0a0a14; color:#334; border-color:#222; }}
         QPushButton#accentBtn {{
-            background:{OR}; color:#fff; border:1px solid {OR};
+            background:{theme.GRADIENT}; color:{B}; border:none;
+            font-family:"{theme.DISPLAY}"; font-weight:700; text-align:center;
         }}
-        QPushButton#accentBtn:hover {{ background:#c04015; color:#fff; }}
-        QProgressBar {{
-            border:1px solid {BD}; border-radius:5px; text-align:center;
-            background:{P}; color:{FG}; height:14px; font-size:10px;
-        }}
-        QProgressBar::chunk {{ background:{AC}; border-radius:5px; }}
-        QScrollBar:vertical {{
-            background:{P}; width:8px; border-radius:4px;
-        }}
-        QScrollBar::handle:vertical {{
-            background:{BD}; border-radius:4px; min-height:20px;
-        }}
-        QScrollBar:horizontal {{
-            background:{P}; height:8px; border-radius:4px;
-        }}
-        QScrollBar::handle:horizontal {{
-            background:{BD}; border-radius:4px; min-width:20px;
-        }}
+        QPushButton#accentBtn:hover {{ background:{theme.GRADIENT_COOL}; }}
         """
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -554,14 +521,14 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         # ── Header ────────────────────────────────────────────────────────────
         hdr = QtWidgets.QHBoxLayout()
         title_lbl = QtWidgets.QLabel("APEX")
-        title_lbl.setStyleSheet(f"color:{self._ORANGE}; font-size:20px; font-weight:bold; font-family:Consolas;")
+        title_lbl.setStyleSheet(f"color:{self._ORANGE}; font-size:20px; font-weight:bold; font-family:'{theme.MONO}';")
         sub_lbl   = QtWidgets.QLabel("  OBJECT DETECTION")
-        sub_lbl.setStyleSheet(f"color:{self._FG}; font-size:20px; font-weight:bold; font-family:Consolas;")
+        sub_lbl.setStyleSheet(f"color:{self._FG}; font-size:20px; font-weight:bold; font-family:'{theme.MONO}';")
         hdr.addWidget(title_lbl)
         hdr.addWidget(sub_lbl)
         hdr.addStretch()
         self._status_lbl = QtWidgets.QLabel("● MODEL NOT LOADED")
-        self._status_lbl.setStyleSheet(f"color:{self._DIM}; font-family:Consolas; font-size:11px;")
+        self._status_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:11px;")
         hdr.addWidget(self._status_lbl)
         root.addLayout(hdr)
 
@@ -588,7 +555,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
         # Confidence row (right-aligned in same bar)
         conf_lbl = QtWidgets.QLabel("Confidence:")
-        conf_lbl.setStyleSheet(f"color:{self._DIM}; font-family:Consolas; font-size:10px;")
+        conf_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:10px;")
         self._conf_spin = QtWidgets.QDoubleSpinBox()
         self._conf_spin.setRange(0.01, 1.00)
         self._conf_spin.setSingleStep(0.05)
@@ -597,7 +564,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._conf_spin.setFixedWidth(68)
         self._conf_spin.setStyleSheet(
             f"background:#08080f; color:{self._FG}; border:1px solid {self._BORDER};"
-            f"font-family:Consolas; font-size:10px; border-radius:4px; padding:2px;"
+            f"font-family:'{theme.MONO}'; font-size:10px; border-radius:{theme.R_SM}px; padding:2px;"
         )
         btn_row.addWidget(conf_lbl)
         btn_row.addWidget(self._conf_spin)
@@ -617,16 +584,16 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
         # Left: image preview
         left_frame = QtWidgets.QFrame()
-        left_frame.setStyleSheet(f"background:{self._PANEL}; border:1px solid {self._BORDER}; border-radius:6px;")
+        left_frame.setStyleSheet(f"background:{self._PANEL}; border:1px solid {self._BORDER}; border-radius:{theme.R_CTRL}px;")
         left_layout = QtWidgets.QVBoxLayout(left_frame)
         left_layout.setContentsMargins(4, 4, 4, 4)
 
         self._img_label = QtWidgets.QLabel()
         self._img_label.setAlignment(Qt.AlignCenter)
         self._img_label.setMinimumSize(400, 300)
-        self._img_label.setStyleSheet(f"background:{self._BG}; border-radius:4px;")
+        self._img_label.setStyleSheet(f"background:{self._BG}; border-radius:{theme.R_SM}px;")
         self._img_label.setText(
-            f"<span style='color:{self._DIM}; font-family:Consolas; font-size:13px;'>"
+            f"<span style='color:{self._DIM}; font-family:{theme.MONO}; font-size:13px;'>"
             "Click  📷 Last Captured  or  📂 Upload Image  to begin"
             "</span>"
         )
@@ -635,7 +602,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         # Image filename label
         self._img_name_lbl = QtWidgets.QLabel("")
         self._img_name_lbl.setAlignment(Qt.AlignCenter)
-        self._img_name_lbl.setStyleSheet(f"color:{self._DIM}; font-family:Consolas; font-size:9px;")
+        self._img_name_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:9px;")
         left_layout.addWidget(self._img_name_lbl)
 
         splitter.addWidget(left_frame)
@@ -643,13 +610,13 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         # Right: report panel
         right_frame = QtWidgets.QFrame()
         right_frame.setFixedWidth(360)
-        right_frame.setStyleSheet(f"background:{self._PANEL}; border:1px solid {self._BORDER}; border-radius:6px;")
+        right_frame.setStyleSheet(f"background:{self._PANEL}; border:1px solid {self._BORDER}; border-radius:{theme.R_CTRL}px;")
         right_layout = QtWidgets.QVBoxLayout(right_frame)
         right_layout.setContentsMargins(10, 8, 10, 8)
         right_layout.setSpacing(6)
 
         rep_title = QtWidgets.QLabel("DETECTION REPORT")
-        rep_title.setStyleSheet(f"color:{self._ORANGE}; font-family:Consolas; font-size:11px; font-weight:bold;")
+        rep_title.setStyleSheet(f"color:{self._ORANGE}; font-family:'{theme.MONO}'; font-size:11px; font-weight:bold;")
         right_layout.addWidget(rep_title)
 
         sep2 = QtWidgets.QFrame()
@@ -684,7 +651,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
         # Status bar
         self._bottom_lbl = QtWidgets.QLabel("")
-        self._bottom_lbl.setStyleSheet(f"color:{self._DIM}; font-family:Consolas; font-size:9px;")
+        self._bottom_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:9px;")
         root.addWidget(self._bottom_lbl)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -702,7 +669,8 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     def _make_stat_card(self, label: str, value: str) -> QtWidgets.QFrame:
         f = QtWidgets.QFrame()
         f.setStyleSheet(
-            f"background:#1a2030; border:1px solid {self._BORDER}; border-radius:5px;"
+            f"background:{theme.RAISED}; border:1px solid {self._BORDER};"
+            f" border-radius:{theme.R_CTRL}px;"
         )
         vbox = QtWidgets.QVBoxLayout(f)
         vbox.setContentsMargins(6, 4, 6, 4)
@@ -711,13 +679,13 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         lbl = QtWidgets.QLabel(label)
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setObjectName("nameLabel")
-        lbl.setStyleSheet(f"color:{self._DIM}; font-size:8px; font-family:Consolas; font-weight:bold;")
+        lbl.setStyleSheet(f"color:{self._DIM}; font-size:8px; font-family:'{theme.MONO}'; font-weight:bold;")
         vbox.addWidget(lbl)
 
         val = QtWidgets.QLabel(value)
         val.setAlignment(Qt.AlignCenter)
         val.setObjectName("valueLabel")
-        val.setStyleSheet(f"color:{self._FG}; font-size:13px; font-family:Consolas; font-weight:bold;")
+        val.setStyleSheet(f"color:{self._FG}; font-size:13px; font-family:'{theme.MONO}'; font-weight:bold;")
         vbox.addWidget(val)
 
         f._val_lbl = val
@@ -726,14 +694,14 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     def _set_card(self, card: QtWidgets.QFrame, value: str, color: str = ""):
         c = color or self._FG
         card._val_lbl.setStyleSheet(
-            f"color:{c}; font-size:13px; font-family:Consolas; font-weight:bold;"
+            f"color:{c}; font-size:13px; font-family:'{theme.MONO}'; font-weight:bold;"
         )
         card._val_lbl.setText(value)
 
     def _set_status(self, text: str, color: str = "#44cc44"):
         self._status_lbl.setText(text)
         self._status_lbl.setStyleSheet(
-            f"color:{color}; font-family:Consolas; font-size:11px;"
+            f"color:{color}; font-family:'{theme.MONO}'; font-size:11px;"
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -857,7 +825,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         except Exception as e:
             self._img_label.setPixmap(QPixmap())
             self._img_label.setText(
-                f"<span style='color:#ff4444; font-family:Consolas; font-size:12px;'>{e}</span>"
+                f"<span style='color:#ff4444; font-family:{theme.MONO}; font-size:12px;'>{e}</span>"
             )
 
     def _show_bgr(self, bgr):
@@ -1116,7 +1084,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._elapsed_ms    = 0.0
         self._img_label.setPixmap(QPixmap())
         self._img_label.setText(
-            f"<span style='color:{self._DIM}; font-family:Consolas; font-size:13px;'>"
+            f"<span style='color:{self._DIM}; font-family:{theme.MONO}; font-size:13px;'>"
             "Click  📷 Last Captured  or  📂 Upload Image  to begin"
             "</span>"
         )

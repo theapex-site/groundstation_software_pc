@@ -204,7 +204,8 @@ class GroundStation(QtWidgets.QMainWindow):
         self.image_label.setScaledContents(False)
         self.image_label.setAlignment(QtCore.Qt.AlignCenter)
         self.image_label.setStyleSheet(
-            "background-color:#000000; border:2px solid #1a1a2e; border-radius:15px;"
+            f"background-color:{theme.DEEP}; border:1px solid {theme.LINE};"
+            f" border-radius:{theme.R_CARD}px;"
         )
         self.image_label.setToolTip(
             "Payload image downlink window.\n"
@@ -977,27 +978,13 @@ class _ReconnectDialog(QtWidgets.QDialog):
         QDialog {{
             background-color: {_BG};
             border: 1px solid {_BORDER};
-            border-radius: 10px;
+            border-radius:{theme.R_CARD}px;
         }}
         QLabel {{
-            font-family: Consolas;
             color: {_TEXT};
-            font-size: 12px;
+            font-size: {theme.FS_BODY}px;
         }}
-        QPushButton {{
-            background: {_SURFACE};
-            color: {_ACCENT};
-            border: 1px solid {_ACCENT};
-            padding: 6px 18px;
-            border-radius: 5px;
-            font-size: 12px;
-            min-width: 80px;
-            font-family: Consolas;
-        }}
-        QPushButton:hover {{
-            background: {_ACCENT};
-            color: {_BG};
-        }}
+        QPushButton {{ min-width: 92px; text-align: center; }}
     """
 
     def __init__(self, parent):

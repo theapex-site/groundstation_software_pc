@@ -11,6 +11,7 @@ Double-click any MiniGraph to open its GraphPopup.
 
 from datetime import datetime
 from PyQt5 import QtWidgets, QtCore, QtGui
+import theme
 from config import POPUP_GRAPH_MAX_POINTS, MINI_GRAPH_MAX_POINTS, POPUP_SYNC_MS
 
 
@@ -56,7 +57,7 @@ class MiniGraph(QtWidgets.QWidget):
 
         # Background + border
         bg_path = QtGui.QPainterPath()
-        bg_path.addRoundedRect(rect, 15, 15)
+        bg_path.addRoundedRect(rect, theme.R_CARD, theme.R_CARD)
         painter.fillPath(bg_path, QtGui.QColor("#000000"))
         pen = QtGui.QPen(QtGui.QColor("#1a1a2e"))
         pen.setWidth(2)
@@ -166,7 +167,7 @@ class PopupGraph(MiniGraph):
 
         # Background
         bg_path = QtGui.QPainterPath()
-        bg_path.addRoundedRect(rect, 15, 15)
+        bg_path.addRoundedRect(rect, theme.R_CARD, theme.R_CARD)
         painter.fillPath(bg_path, QtGui.QColor("#000000"))
         pen = QtGui.QPen(QtGui.QColor("#1a1a2e"))
         pen.setWidth(2)
