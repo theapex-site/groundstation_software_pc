@@ -215,7 +215,7 @@ QToolTip {{
     border: 1px solid {LINE};
     border-radius: {R_CARD}px;
     background: {RAISED};
-    margin-top: 14px;
+    margin-top: 18px;
     padding: 12px 6px 6px 6px;
     font-family: "{MONO}";
     font-size: {FS_LABEL}px;
@@ -223,17 +223,25 @@ QToolTip {{
     letter-spacing: {TRACK_LABEL};
     color: {SLATE};
 }}
-/* Without this the title is drawn straight across its own border. The
-   object-detection dialog already carried a local copy of this rule, which
-   is why that one window looked right and the nine groups here did not. */
+/* The title is a tab, not a floating chip: rounded along the top, open at
+   the bottom, and carrying the card's own fill so the two read as one
+   shape. It overlaps the card's top border by a few pixels, which is what
+   hides the line underneath and makes them join.
+   Without a ::title rule at all, Qt draws the text straight across the
+   border — object_detection.py already carried a local fix, which is why
+   that one dialog looked right and the nine groups here did not. */
 #groupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 14px;
-    padding: 3px 10px;
-    background: {PANEL};
+    left: 0px;
+    padding: 5px 14px 8px 14px;
+    background: {RAISED};
     border: 1px solid {LINE};
-    border-radius: {R_PILL}px;
+    border-bottom: none;
+    border-top-left-radius: {R_CARD}px;
+    border-top-right-radius: {R_CARD}px;
+    border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
     color: {SLATE};
 }}
 
@@ -328,24 +336,35 @@ QToolTip {{
     color: {SLATE};
 }}
 
-/* Session chips in the application bar: port, signal, clock, packets. */
+/* Session chips in the application bar: port, signal, clock, packets.
+   Same tab shape as the group titles — rounded along the top, open at the
+   bottom — so they sit on the bar's bottom border rather than floating in
+   the middle of it. They are added with AlignBottom for that to land. */
 #statChip {{
     font-family: "{MONO}";
-    font-size: {FS_LABEL}px;
+    font-size: {FS_MICRO}px;
     color: {SLATE};
     background: {RAISED};
     border: 1px solid {LINE};
-    border-radius: {R_PILL}px;
-    padding: 5px 12px;
+    border-bottom: none;
+    border-top-left-radius: {R_CTRL}px;
+    border-top-right-radius: {R_CTRL}px;
+    border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
+    padding: 5px 11px 6px 11px;
 }}
 #linkChip {{
     font-family: "{MONO}";
-    font-size: {FS_LABEL}px;
+    font-size: {FS_MICRO}px;
     font-weight: 600;
-    border-radius: {R_PILL}px;
-    padding: 5px 12px;
     background: {RAISED};
     border: 1px solid {LINE};
+    border-bottom: none;
+    border-top-left-radius: {R_CTRL}px;
+    border-top-right-radius: {R_CTRL}px;
+    border-bottom-left-radius: 0px;
+    border-bottom-right-radius: 0px;
+    padding: 5px 11px 6px 11px;
     color: {SLATE};
 }}
 #linkChip[state="stable"]    {{ color: {OK};    border-color: {OK}; }}
@@ -416,6 +435,24 @@ QPushButton#dangerBtn:hover {{ background: {ALARM_FILL}; color: {CREAM}; border-
 
 QPushButton#ghostBtn {{ background: transparent; color: {SLATE}; }}
 QPushButton#ghostBtn:hover {{ border-color: {TEAL}; color: {TEAL}; }}
+
+/* Round icon button. Needs its own font: the glyph is not in the body face,
+   and the shared QPushButton rule left-aligns its text. */
+QPushButton#settingsBtn {{
+    background: {RAISED};
+    color: {TEAL};
+    border: 1px solid {LINE};
+    border-radius: 17px;
+    font-family: "Segoe UI Symbol", "Segoe UI";
+    font-size: 15px;
+    padding: 0px;
+    text-align: center;
+}}
+QPushButton#settingsBtn:hover {{
+    background: {TEAL};
+    color: {DEEP};
+    border-color: {TEAL};
+}}
 
 /* ── Progress ───────────────────────────────────────────────────────────── */
 QProgressBar {{

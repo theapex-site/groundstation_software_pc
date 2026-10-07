@@ -15,9 +15,6 @@ from config import DEGREE
 class TelemetryPanel(QtWidgets.QFrame):
     """Scrollable left panel showing live CubeSat telemetry."""
 
-    # Emitted when the user clicks the settings (⚙) button
-    settings_clicked = QtCore.pyqtSignal()
-
     def __init__(self):
         super().__init__()
         self.setObjectName("TelemetryPanel")
@@ -31,32 +28,6 @@ class TelemetryPanel(QtWidgets.QFrame):
         title.setObjectName("mainTitle")
         title.setAlignment(QtCore.Qt.AlignCenter)
 
-        settings_btn = QtWidgets.QPushButton("⚙")
-        # Set before the stylesheet: an ID rule applied to a widget that does
-        # not carry the id yet is not guaranteed to be re-evaluated.
-        settings_btn.setObjectName("settingsBtn")
-        settings_btn.setFixedSize(34, 34)
-        settings_btn.setToolTip("User Profile & Settings")
-        settings_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        settings_btn.setStyleSheet(f"""
-            QPushButton#settingsBtn {{
-                background: {theme.RAISED};
-                color: {theme.TEAL};
-                border: 1px solid {theme.LINE};
-                border-radius: 17px;
-                font-size: 16px;
-                padding: 0px;
-                min-width: 34px;
-                text-align: center;
-            }}
-            QPushButton#settingsBtn:hover {{
-                background: {theme.TEAL};
-                color: {theme.DEEP};
-                border-color: {theme.TEAL};
-            }}
-        """)
-        settings_btn.clicked.connect(self.settings_clicked.emit)
-
         # How long ago the newest packet arrived. Without this every value
         # keeps its last reading indefinitely and a frozen panel is
         # indistinguishable from a live one.
@@ -65,14 +36,9 @@ class TelemetryPanel(QtWidgets.QFrame):
         self.age_pill.setAlignment(QtCore.Qt.AlignCenter)
         self.age_pill.setToolTip("Time since the last telemetry packet.")
 
-        # A 34px spacer opposite the settings button, so the title is centred
-        # in the panel rather than in the space left beside it.
-        spacer = QtWidgets.QWidget()
-        spacer.setFixedWidth(34)
-
-        heading_row.addWidget(spacer)
+        # The settings button moved to the application bar, so the title is
+        # simply centred now rather than being offset by the button beside it.
         heading_row.addWidget(title, 1)
-        heading_row.addWidget(settings_btn)
         layout.addLayout(heading_row)
 
         age_row = QtWidgets.QHBoxLayout()

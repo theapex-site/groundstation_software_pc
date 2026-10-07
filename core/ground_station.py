@@ -56,6 +56,9 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 class GroundStation(QtWidgets.QMainWindow):
     """Top-level application window for the APEX Ground Control Station."""
 
+    # Seconds of '@@' silence before the link is called lost.
+    LINK_SILENCE_S = 8.0
+
     # Signals emitted from the background image-receive thread
     image_done_signal = QtCore.pyqtSignal(bool, int, int)
     progress_signal   = QtCore.pyqtSignal(int, str)
@@ -104,6 +107,7 @@ class GroundStation(QtWidgets.QMainWindow):
         self._packet_count     = 0
         self._last_packet_time = None     # None until the first packet lands
         self._recent_packets   = []       # monotonic stamps, for the rate
+        self._last_link_time   = None     # last '@@' link frame
 
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
@@ -151,8 +155,8 @@ class GroundStation(QtWidgets.QMainWindow):
         bar.setFixedHeight(56)
 
         row = QtWidgets.QHBoxLayout(bar)
-        row.setContentsMargins(16, 0, 16, 0)
-        row.setSpacing(10)
+        row.setContentsMargins(16, 0, 20, 0)
+        row.setSpacing(9)
 
         logo = QtWidgets.QLabel()
         pix = QtGui.QPixmap(os.path.join(BASE_PATH, "images", "Apex Logo.png"))
@@ -190,10 +194,12 @@ class GroundStation(QtWidgets.QMainWindow):
                   self.clock_label, self.packets_label, self.rate_label):
             w.setObjectName("statChip")
 
-        row.addWidget(self.link_status)
+        # Bottom-aligned so each chip's open edge lands on the bar's own
+        # bottom border and the two join, the way the group titles do.
+        row.addWidget(self.link_status, 0, QtCore.Qt.AlignBottom)
         for w in (self.com_label, self.rssi_label, self.snr_label,
                   self.clock_label, self.packets_label, self.rate_label):
-            row.addWidget(w)
+            row.addWidget(w, 0, QtCore.Qt.AlignBottom)
 
         profile_btn = QtWidgets.QPushButton("⚙")
         profile_btn.setObjectName("settingsBtn")
@@ -606,6 +612,7 @@ class GroundStation(QtWidgets.QMainWindow):
         if parts[0] != "@@" or parts[-1] != "$$":
             return
         try:
+            self._last_link_time = time.monotonic()
             connected = bool(int(parts[1]))
             rssi      = int(parts[2])
             snr       = int(parts[3])
@@ -1043,6 +1050,13 @@ class GroundStation(QtWidgets.QMainWindow):
 
         age = None if self._last_packet_time is None else now - self._last_packet_time
         self.telemetry.set_data_age(age)
+
+        # Link state used to change only when an '@@' frame arrived — but a
+        # lost link stops those too, so the chip sat on LINK STABLE while the
+        # panel beside it was withdrawing its readings. Silence is the signal.
+        if (self.is_connected and self._last_link_time is not None
+                and now - self._last_link_time > self.LINK_SILENCE_S):
+            self.update_link_status(False)
 
     def _note_packet(self):
         """Record that a telemetry packet just arrived."""
