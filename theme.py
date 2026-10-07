@@ -308,7 +308,27 @@ QToolTip {{
 #agePill[state="stale"] {{ color: {WARN};  border-color: {WARN}; }}
 #agePill[state="lost"]  {{ color: {ALARM}; border-color: {ALARM}; }}
 
-/* Session chips beside the payload heading: port, signal, clock, packets. */
+/* Application bar, in place of the old 250px logo header. */
+#appBar {{
+    background: {PANEL};
+    border-bottom: 1px solid {LINE};
+}}
+#appBarMark {{
+    font-family: "{DISPLAY}";
+    font-size: {FS_HEAD}px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    color: {CREAM};
+}}
+#appBarSub {{
+    font-family: "{BODY}";
+    font-size: {FS_LABEL}px;
+    font-weight: 500;
+    letter-spacing: {TRACK_LABEL};
+    color: {SLATE};
+}}
+
+/* Session chips in the application bar: port, signal, clock, packets. */
 #statChip {{
     font-family: "{MONO}";
     font-size: {FS_LABEL}px;

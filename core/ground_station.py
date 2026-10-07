@@ -65,7 +65,14 @@ class GroundStation(QtWidgets.QMainWindow):
         self.com_port   = com_port
         self.user_email = user_email
         self.setWindowTitle("APEX Ground Control Station")
-        self.resize(1900, 1080)
+        # resize(1900, 1080) was taller than the usable area of a 1080p screen
+        # once the title bar and taskbar are counted, so the window opened
+        # already clipped with no way to see the bottom of either panel.
+        self.setMinimumSize(1180, 700)
+        screen = QtWidgets.QApplication.primaryScreen().availableGeometry()
+        self.resize(min(1900, screen.width()), min(1080, screen.height()))
+        if screen.width() <= 1600 or screen.height() <= 900:
+            self.setWindowState(self.windowState() | QtCore.Qt.WindowMaximized)
 
         # ── Background ────────────────────────────────────────────────────────
         # The website's animated space scene, drawn in paintEvent. Was
@@ -129,95 +136,104 @@ class GroundStation(QtWidgets.QMainWindow):
     # ══════════════════════════════════════════════════════════════════════════
     #  UI construction
     # ══════════════════════════════════════════════════════════════════════════
+    def _build_app_bar(self) -> QtWidgets.QWidget:
+        """
+        The 56px bar across the top.
+
+        Replaces a header row that scaled the APEX logo to 250x250, the
+        CubeSat render to 250x250 and the title plate to 420px wide — roughly
+        a quarter of the vertical space on a 1080p screen spent on decoration,
+        directly above data set at 11px. That space goes to telemetry now, and
+        the bar carries the session state instead.
+        """
+        bar = QtWidgets.QWidget()
+        bar.setObjectName("appBar")
+        bar.setFixedHeight(56)
+
+        row = QtWidgets.QHBoxLayout(bar)
+        row.setContentsMargins(16, 0, 16, 0)
+        row.setSpacing(10)
+
+        logo = QtWidgets.QLabel()
+        pix = QtGui.QPixmap(os.path.join(BASE_PATH, "images", "Apex Logo.png"))
+        if not pix.isNull():
+            logo.setPixmap(pix.scaled(32, 32, QtCore.Qt.KeepAspectRatio,
+                                      QtCore.Qt.SmoothTransformation))
+        row.addWidget(logo)
+
+        wordmark = QtWidgets.QLabel("APEX")
+        wordmark.setObjectName("appBarMark")
+        row.addWidget(wordmark)
+
+        sub = QtWidgets.QLabel("GROUND CONTROL")
+        sub.setObjectName("appBarSub")
+        row.addWidget(sub)
+
+        row.addStretch()
+
+        # Session chips. Mission clock, packet count and rate were tracked
+        # already and never shown, so a link degrading from 1 Hz to 0.2 Hz
+        # looked identical to a healthy one until it dropped out.
+        self.link_status = QtWidgets.QLabel("● ACQUIRING")
+        self.link_status.setObjectName("linkChip")
+        self.link_status.setProperty("state", "acquiring")
+        self.link_status.setFixedWidth(180)
+        self.link_status.setAlignment(QtCore.Qt.AlignCenter)
+
+        self.com_label     = QtWidgets.QLabel(f"COM {self.com_port}")
+        self.rssi_label    = QtWidgets.QLabel("RSSI —")
+        self.snr_label     = QtWidgets.QLabel("SNR —")
+        self.clock_label   = QtWidgets.QLabel("T+00:00:00")
+        self.packets_label = QtWidgets.QLabel("0 PKT")
+        self.rate_label    = QtWidgets.QLabel("— Hz")
+        for w in (self.com_label, self.rssi_label, self.snr_label,
+                  self.clock_label, self.packets_label, self.rate_label):
+            w.setObjectName("statChip")
+
+        row.addWidget(self.link_status)
+        for w in (self.com_label, self.rssi_label, self.snr_label,
+                  self.clock_label, self.packets_label, self.rate_label):
+            row.addWidget(w)
+
+        profile_btn = QtWidgets.QPushButton("⚙")
+        profile_btn.setObjectName("settingsBtn")
+        profile_btn.setFixedSize(34, 34)
+        profile_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        profile_btn.setToolTip("User profile and settings")
+        profile_btn.clicked.connect(self._open_user_profile)
+        row.addWidget(profile_btn)
+
+        return bar
+
     def _build_ui(self):
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
 
-        root = QtWidgets.QHBoxLayout(central)
+        # Application bar across the top, panels beneath it.
+        root = QtWidgets.QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self._build_app_bar())
+
+        body = QtWidgets.QHBoxLayout()
+        body.setContentsMargins(theme.GAP, theme.GAP, theme.GAP, theme.GAP)
+        body.setSpacing(theme.GAP)
+        root.addLayout(body, 1)
 
         # ── Left: telemetry panel ─────────────────────────────────────────────
+        # minimumWidth rather than fixed: 420 + 450 of hard-fixed panels left
+        # only ~480px of a 1366-wide laptop for the centre column.
         self.telemetry = TelemetryPanel()
-        self.telemetry.setFixedWidth(420)
-        self.telemetry.settings_clicked.connect(self._open_user_profile)
-        root.addWidget(self.telemetry)
+        self.telemetry.setMinimumWidth(360)
+        self.telemetry.setMaximumWidth(460)
+        body.addWidget(self.telemetry, 0)
 
         # ── Centre ────────────────────────────────────────────────────────────
         centre = QtWidgets.QFrame()
         cl = QtWidgets.QVBoxLayout(centre)
-        cl.setSpacing(5)
-        cl.setContentsMargins(10, 5, 10, 5)
-        root.addWidget(centre, 1)
-
-        _base = BASE_PATH
-
-        # Header row
-        header_row = QtWidgets.QHBoxLayout()
-        logo = QtWidgets.QLabel()
-        logo.setPixmap(
-            QtGui.QPixmap(os.path.join(_base, "images", "Apex Logo.png"))
-            .scaled(250, 250, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-        )
-        logo.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
-
-        gcs_img_lbl = QtWidgets.QLabel()
-        gcs_img_lbl.setAlignment(QtCore.Qt.AlignCenter)
-        gcs_img_lbl.setPixmap(
-            QtGui.QPixmap(os.path.join(_base, "images", "GCS_img.png"))
-            .scaledToWidth(420, QtCore.Qt.SmoothTransformation)
-        )
-        gcs_img_lbl.setSizePolicy(QtWidgets.QSizePolicy.Preferred, QtWidgets.QSizePolicy.Fixed)
-
-        cubesat_lbl = QtWidgets.QLabel()
-        cubesat_lbl.setPixmap(
-            QtGui.QPixmap(os.path.join(_base, "images", "cubesat_img.png"))
-            .scaled(250, 250, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-        )
-        cubesat_lbl.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-
-        header_row.addWidget(logo)
-        header_row.addStretch()
-        header_row.addWidget(gcs_img_lbl)
-        header_row.addStretch()
-        header_row.addWidget(cubesat_lbl)
-        cl.addLayout(header_row)
-
-        # ── Status strip: port, link, and how the session is going ────────────
-        # Mission clock, packet count and rate were all being tracked already
-        # and never shown, so an operator could not tell a degrading link
-        # (1 Hz falling to 0.2 Hz) from a healthy one until it dropped out.
-        status_row = QtWidgets.QHBoxLayout()
-        status_row.setSpacing(10)
-
-        self.com_label = QtWidgets.QLabel(f"COM {self.com_port}")
-        self.com_label.setObjectName("statChip")
-
-        self.link_status = QtWidgets.QLabel("● ACQUIRING")
-        self.link_status.setObjectName("linkChip")
-        self.link_status.setProperty("state", "acquiring")
-        self.link_status.setFixedWidth(190)
-        self.link_status.setAlignment(QtCore.Qt.AlignCenter)
-
-        self.rssi_label = QtWidgets.QLabel("RSSI —")
-        self.rssi_label.setObjectName("statChip")
-        self.snr_label = QtWidgets.QLabel("SNR —")
-        self.snr_label.setObjectName("statChip")
-        self.clock_label = QtWidgets.QLabel("T+00:00:00")
-        self.clock_label.setObjectName("statChip")
-        self.packets_label = QtWidgets.QLabel("0 PKT")
-        self.packets_label.setObjectName("statChip")
-        self.rate_label = QtWidgets.QLabel("— Hz")
-        self.rate_label.setObjectName("statChip")
-
-        status_row.addStretch()
-        for w in (self.com_label, self.link_status, self.rssi_label,
-                  self.snr_label, self.clock_label, self.packets_label,
-                  self.rate_label):
-            status_row.addWidget(w)
-        status_row.addStretch()
-
-        sig_container = QtWidgets.QWidget()
-        sig_container.setLayout(status_row)
-        cl.addWidget(sig_container)
+        cl.setSpacing(theme.GAP)
+        cl.setContentsMargins(0, 0, 0, 0)
+        body.addWidget(centre, 1)
 
         # Payload heading
         payload_title = QtWidgets.QLabel("PAYLOAD IMAGE DOWNLINK")
@@ -278,24 +294,47 @@ class GroundStation(QtWidgets.QMainWindow):
         cl.addWidget(self.image_label, 5)
         cl.addSpacing(10)
 
-        # Mini graphs
-        graph_row = QtWidgets.QHBoxLayout()
-        graph_row.setSpacing(5)
+        # Mini graphs. Four across needs about 700px to stay readable; below
+        # that the grid reflows to 2x2 rather than crushing them.
         self.alt_graph  = MiniGraph("Altitude",         "m")
         self.temp_graph = MiniGraph("Temperature",      "°C")
         self.batt_graph = MiniGraph("Battery Voltage",  "V")
         self.iaq_graph  = MiniGraph("AQI Index",        "")
         self.graph_popups: list[GraphPopup] = []
-        for g in (self.alt_graph, self.temp_graph, self.batt_graph, self.iaq_graph):
+        self._graphs = (self.alt_graph, self.temp_graph,
+                        self.batt_graph, self.iaq_graph)
+        for g in self._graphs:
             g.clicked.connect(self._open_graph_popup)
-            graph_row.addWidget(g)
-        cl.addLayout(graph_row, 2)
+            g.setMinimumWidth(168)
+
+        self.graph_grid = QtWidgets.QGridLayout()
+        self.graph_grid.setSpacing(theme.GAP)
+        self._graph_columns = 0
+        self._layout_graphs(4)
+        cl.addLayout(self.graph_grid, 2)
 
         # ── Right panel ───────────────────────────────────────────────────────
         self.right = RightPanel()
         self.right.command_signal.connect(self._send_command)
-        self.right.setFixedWidth(450)
-        root.addWidget(self.right)
+        self.right.setMinimumWidth(380)
+        self.right.setMaximumWidth(480)
+        body.addWidget(self.right, 0)
+
+    def _layout_graphs(self, columns: int):
+        """Re-flow the mini graphs into `columns` columns."""
+        if columns == self._graph_columns:
+            return
+        self._graph_columns = columns
+        for g in self._graphs:
+            self.graph_grid.removeWidget(g)
+        for i, g in enumerate(self._graphs):
+            self.graph_grid.addWidget(g, i // columns, i % columns)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, "graph_grid"):
+            centre_width = self.width() - self.telemetry.width() - self.right.width()
+            self._layout_graphs(4 if centre_width >= 700 else 2)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Mission log helpers
