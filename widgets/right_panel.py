@@ -24,6 +24,7 @@ from PyQt5.QtOpenGL import QGLWidget
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
+import theme
 from config import DEFAULT_LAT, DEFAULT_LON
 from widgets.dialogs import ThemedMessageBox
 from widgets.object_detection import ObjectDetectionDialog
@@ -161,16 +162,18 @@ class RightPanel(QtWidgets.QFrame):
         super().__init__()
         layout = QtWidgets.QVBoxLayout(self)
 
-        def group(name: str) -> QtWidgets.QGroupBox:
-            g = QtWidgets.QGroupBox(name)
-            g.setObjectName("groupBox")
-            g.setLayout(QtWidgets.QGridLayout())
+        def group(name: str) -> theme.TabCard:
+            g = theme.TabCard(name)
+            grid = QtWidgets.QGridLayout()
+            # Room for the heading, which is painted as part of the outline.
+            grid.setContentsMargins(12, g.tab_height() + 6, 12, 10)
+            g.setLayout(grid)
             return g
 
         # ── CubeSat Orientation ───────────────────────────────────────────────
         imu = group("🧭 CUBESAT ORIENTATION")
         self.cubesat_3d = CubeSat3D()
-        self.cubesat_3d.setMinimumHeight(250)
+        self.cubesat_3d.setMinimumHeight(170)
         imu.layout().addWidget(self.cubesat_3d, 0, 0, 1, 2)
 
         self.imu_labels: dict[str, QtWidgets.QLabel] = {}
@@ -247,15 +250,14 @@ class RightPanel(QtWidgets.QFrame):
         layout.addWidget(control)
 
         # ── Map ───────────────────────────────────────────────────────────────
-        map_group = QtWidgets.QGroupBox("📍 CUBESAT LOCATION")
-        map_group.setObjectName("groupBox")
+        map_group = theme.TabCard("📍 CUBESAT LOCATION")
         map_group.setToolTip(
             "Displays the real-time geographical location of the CubeSat.\n"
             "Position is updated using GPS latitude and longitude telemetry.\n"
             "Map view helps visualise the CubeSat ground track."
         )
-        map_group.setToolTipDuration(2000)
         map_layout = QtWidgets.QVBoxLayout()
+        map_layout.setContentsMargins(12, map_group.tab_height() + 6, 12, 10)
         map_group.setLayout(map_layout)
 
         self._map_lat = DEFAULT_LAT

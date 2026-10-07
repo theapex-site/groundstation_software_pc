@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import sys
 
-from PyQt5 import QtGui, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Colour — theapex.site/css/style.css
@@ -159,6 +159,78 @@ def init(app: QtWidgets.QApplication) -> None:
     icon_path = _resource("icon.ico")
     if os.path.exists(icon_path):
         app.setWindowIcon(QtGui.QIcon(icon_path))
+
+
+class TabCard(QtWidgets.QGroupBox):
+    """
+    A card whose heading is part of its outline rather than a chip on top.
+
+    Qt stylesheets can only curve a corner inwards, so a QGroupBox::title
+    always meets the card's top edge at a hard right angle — the heading
+    reads as a separate tile pasted over the border. The join needs a
+    concave fillet, which means painting card and heading as one path.
+
+    Everything is drawn here, so the stylesheet does not style this widget.
+    """
+
+    PAD_X = 14          # inside the heading, left and right of the text
+    PAD_Y = 6           # above and below the heading text
+    NOTCH = 11          # radius of the fillet into the card's top edge
+
+    def __init__(self, title: str = "", parent=None):
+        super().__init__(title, parent)
+        self._title_font = QtGui.QFont(MONO, pointSize=-1)
+        self._title_font.setPixelSize(FS_LABEL)
+        self._title_font.setWeight(QtGui.QFont.DemiBold)
+        self._title_font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 1.4)
+
+    def tab_height(self) -> int:
+        return QtGui.QFontMetrics(self._title_font).height() + self.PAD_Y * 2
+
+    def tab_width(self) -> int:
+        fm = QtGui.QFontMetrics(self._title_font)
+        return min(fm.horizontalAdvance(self.title()) + self.PAD_X * 2,
+                   max(self.width() - R_CARD - self.NOTCH, 40))
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+
+        w, h = self.width(), self.height()
+        r = float(R_CARD)
+        n = float(self.NOTCH)
+        th = float(self.tab_height())
+        tw = float(self.tab_width())
+
+        path = QtGui.QPainterPath()
+        # Heading: up the left edge and across the top.
+        path.moveTo(0, r)
+        path.arcTo(0, 0, 2 * r, 2 * r, 180, -90)        # heading top-left
+        path.lineTo(tw - r, 0)
+        path.arcTo(tw - 2 * r, 0, 2 * r, 2 * r, 90, -90)  # heading top-right
+        path.lineTo(tw, th - n)
+        # The fillet: curves away from the heading into the card's top edge,
+        # which is the join a border-radius cannot express.
+        path.arcTo(tw, th - 2 * n, 2 * n, 2 * n, 180, 90)
+        # Card: across the top, then round the remaining three corners.
+        path.lineTo(w - r, th)
+        path.arcTo(w - 2 * r, th, 2 * r, 2 * r, 90, -90)
+        path.lineTo(w, h - r)
+        path.arcTo(w - 2 * r, h - 2 * r, 2 * r, 2 * r, 0, -90)
+        path.lineTo(r, h)
+        path.arcTo(0, h - 2 * r, 2 * r, 2 * r, 270, -90)
+        path.closeSubpath()
+
+        p.fillPath(path, QtGui.QColor(RAISED))
+        pen = QtGui.QPen(QtGui.QColor(LINE))
+        pen.setWidthF(1.0)
+        p.strokePath(path, pen)
+
+        p.setFont(self._title_font)
+        p.setPen(QtGui.QColor(SLATE))
+        p.drawText(QtCore.QRectF(self.PAD_X, 0, tw - self.PAD_X, th),
+                   QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, self.title())
+        p.end()
 
 
 def repolish(*widgets: QtWidgets.QWidget) -> None:
@@ -534,4 +606,8 @@ QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 
 QScrollArea {{ background: transparent; border: none; }}
+/* The viewport and the widget inside it are separate QWidgets, and both
+   default to the palette's window colour — a light slab behind the cards. */
+QScrollArea > QWidget > QWidget {{ background: transparent; }}
+QScrollArea > QWidget > QScrollBar {{ background: transparent; }}
 """
