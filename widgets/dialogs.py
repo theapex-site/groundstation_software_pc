@@ -41,6 +41,20 @@ _GREEN    = theme.OK
 _YELLOW   = theme.WARN
 _RED      = theme.ALARM
 
+
+def _icon_btn(text: str, icon_name: str,
+              color: str = _MUTED, size: int = 16) -> QtWidgets.QPushButton:
+    """A button labelled with a line icon instead of a colour emoji.
+
+    An emoji in the label is drawn by the system emoji font, in its own
+    colours and at its own weight, so a row of buttons carried several
+    unrelated hues. A QIcon is tinted from the theme tokens.
+    """
+    btn = QtWidgets.QPushButton(text)
+    btn.setIcon(theme.icon(icon_name, color, size))
+    btn.setIconSize(QtCore.QSize(size, size))
+    return btn
+
 # ── Session persistence (survives app close, cleared on system reboot) ────────
 # %WINDIR%\Temp is cleared on reboot; fall back to regular temp if unavailable
 _SESSION_FILE = os.path.join(
@@ -702,8 +716,8 @@ class TermsDialog(QtWidgets.QDialog):
         # ── Header row (title + X close button) ──────────────────────────────
         hdr_row = QtWidgets.QHBoxLayout()
 
-        icon_lbl = QtWidgets.QLabel("📋")
-        icon_lbl.setStyleSheet("font-size: 18px;")
+        icon_lbl = QtWidgets.QLabel()
+        icon_lbl.setPixmap(theme.icon("clipboard", theme.SLATE, 18).pixmap(18, 18))
         hdr_row.addWidget(icon_lbl)
 
         title_lbl = QtWidgets.QLabel("Terms & Conditions")
@@ -1071,9 +1085,9 @@ class _ComPortPage(QtWidgets.QWidget):
         lay.setSpacing(14)
         lay.addStretch(1)
 
-        icon = QtWidgets.QLabel("📡")
+        icon = QtWidgets.QLabel()
         icon.setAlignment(QtCore.Qt.AlignCenter)
-        icon.setStyleSheet("font-size: 42px;")
+        icon.setPixmap(theme.icon("antenna", theme.TEAL, 40).pixmap(40, 40))
         lay.addWidget(icon)
 
         title = QtWidgets.QLabel("SELECT COM PORT")
@@ -1107,8 +1121,8 @@ class _ComPortPage(QtWidgets.QWidget):
 
         # Buttons
         btn_row = QtWidgets.QHBoxLayout()
-        refresh_btn = QtWidgets.QPushButton("🔄  Refresh")
-        connect_btn = QtWidgets.QPushButton("🔌  Connect")
+        refresh_btn = _icon_btn("Refresh", "refresh")
+        connect_btn = _icon_btn("Connect", "plug", _BG)
         connect_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_ACCENT}; color: {_BG};
@@ -1135,7 +1149,7 @@ class _ComPortPage(QtWidgets.QWidget):
         self._driver_hint.hide()
         lay.addWidget(self._driver_hint)
 
-        self._driver_btn = QtWidgets.QPushButton("⬇  Install USB Driver")
+        self._driver_btn = _icon_btn("Install USB Driver", "download")
         self._driver_btn.setMinimumHeight(30)
         self._driver_btn.setStyleSheet(f"""
             QPushButton {{
@@ -1192,7 +1206,7 @@ class _ComPortPage(QtWidgets.QWidget):
             ok, message = drv.install()
         finally:
             self._driver_btn.setEnabled(True)
-            self._driver_btn.setText("⬇  Install USB Driver")
+            self._driver_btn.setText("Install USB Driver")
 
         if ok:
             ThemedMessageBox.information(self, "Install USB Driver", message)
@@ -1255,8 +1269,14 @@ class LoginWindow(QtWidgets.QDialog):
         root_lay.setSpacing(0)
 
         # ── LEFT PANEL (branded background + logo) ────────────────────────────
+        # Both the starfield and the scrim take the panel's real height. They
+        # were pinned at 580 against a 620px window, which left a 40px band of
+        # flat black under the logo with a visible seam across it — on the
+        # first screen of the product.
+        panel_w, panel_h = 340, self.height()
+
         left = QtWidgets.QLabel()
-        left.setFixedWidth(340)
+        left.setFixedWidth(panel_w)
         left.setScaledContents(False)
         left.setAlignment(QtCore.Qt.AlignCenter)
 
@@ -1264,11 +1284,11 @@ class LoginWindow(QtWidgets.QDialog):
         # panel's exact size. Was images/BG1.jpg scaled and centre-cropped,
         # which never matched the site.
         from widgets.space_bg import backdrop
-        left.setPixmap(backdrop(340, 580))
+        left.setPixmap(backdrop(panel_w, panel_h))
 
         # Overlay container (title top, logo below it)
         left_overlay = QtWidgets.QWidget(left)
-        left_overlay.setGeometry(0, 0, 340, 580)
+        left_overlay.setGeometry(0, 0, panel_w, panel_h)
         # Light, because the starfield underneath is the point now.
         left_overlay.setStyleSheet("background: rgba(0,0,0,0.35);")
         ov_lay = QtWidgets.QVBoxLayout(left_overlay)
@@ -1401,9 +1421,9 @@ class ComPortSelector(QtWidgets.QDialog):
         root.setSpacing(16)
 
         # ── Header ────────────────────────────────────────────────────────────
-        icon_lbl = QtWidgets.QLabel("📡")
+        icon_lbl = QtWidgets.QLabel()
         icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
-        icon_lbl.setStyleSheet("font-size: 36px;")
+        icon_lbl.setPixmap(theme.icon("antenna", theme.TEAL, 34).pixmap(34, 34))
         root.addWidget(icon_lbl)
 
         title = QtWidgets.QLabel("SELECT COM PORT")
@@ -1444,8 +1464,8 @@ class ComPortSelector(QtWidgets.QDialog):
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.setSpacing(10)
 
-        refresh_btn = QtWidgets.QPushButton("🔄  Refresh")
-        connect_btn = QtWidgets.QPushButton("🔌  Connect")
+        refresh_btn = _icon_btn("Refresh", "refresh")
+        connect_btn = _icon_btn("Connect", "plug", _BG)
         connect_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_ACCENT};
@@ -1568,10 +1588,10 @@ class ThemedMessageBox(QtWidgets.QDialog):
 
     # ── icon lookup ───────────────────────────────────────────────────────────
     _ICONS = {
-        "information": ("ℹ",  _ACCENT),
-        "warning":     ("⚠",  _YELLOW),
-        "critical":    ("✖",  _RED),
-        "question":    ("?",  _ACCENT),
+        "information": ("info",     _ACCENT),
+        "warning":     ("warning",  _YELLOW),
+        "critical":    ("cross",    _RED),
+        "question":    ("question", _ACCENT),
     }
 
     def __init__(
@@ -1610,12 +1630,11 @@ class ThemedMessageBox(QtWidgets.QDialog):
         root.setSpacing(14)
 
         # ── Icon + title row ──────────────────────────────────────────────────
-        icon_char, icon_color = self._ICONS.get(kind, ("ℹ", _ACCENT))
+        icon_name, icon_color = self._ICONS.get(kind, ("info", _ACCENT))
         hdr = QtWidgets.QHBoxLayout()
-        icon_lbl = QtWidgets.QLabel(icon_char)
-        icon_lbl.setStyleSheet(
-            f"color: {icon_color}; font-size: 28px; margin-right: 10px;"
-        )
+        icon_lbl = QtWidgets.QLabel()
+        icon_lbl.setPixmap(theme.icon(icon_name, icon_color, 26).pixmap(26, 26))
+        icon_lbl.setStyleSheet("margin-right: 10px;")
         icon_lbl.setFixedWidth(38)
         title_lbl = QtWidgets.QLabel(title)
         title_lbl.setStyleSheet(
@@ -1704,7 +1723,7 @@ class ThemedMessageBox(QtWidgets.QDialog):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  UserProfileDialog   ← opened by the ⚙ button in TelemetryPanel
+#  UserProfileDialog   <- opened by the gear button in the application bar
 # ══════════════════════════════════════════════════════════════════════════════
 class _MyBackupsDialog(QtWidgets.QDialog):
     """
@@ -2072,8 +2091,8 @@ class UserProfileDialog(QtWidgets.QDialog):
 
         # ── Header ────────────────────────────────────────────────────────────
         hdr = QtWidgets.QHBoxLayout()
-        avatar = QtWidgets.QLabel("👤")
-        avatar.setStyleSheet("font-size: 28px;")
+        avatar = QtWidgets.QLabel()
+        avatar.setPixmap(theme.icon("user", theme.SLATE, 26).pixmap(26, 26))
         hdr.addWidget(avatar)
 
         title_col = QtWidgets.QVBoxLayout()
@@ -2162,7 +2181,7 @@ class UserProfileDialog(QtWidgets.QDialog):
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.setSpacing(10)
 
-        self._backups_btn = QtWidgets.QPushButton("🗂  My Backups")
+        self._backups_btn = _icon_btn("My Backups", "archive")
         self._backups_btn.setMinimumHeight(34)
         self._backups_btn.setStyleSheet(f"""
             QPushButton {{
@@ -2296,7 +2315,7 @@ class UserProfileDialog(QtWidgets.QDialog):
     @QtCore.pyqtSlot(object, object)
     def _on_profile_loaded(self, info, url):
         if info is None:
-            self._status_lbl.setText("⚠  Could not load your details (offline?)")
+            self._status_lbl.setText("Could not load your details (offline?)")
             self._status_lbl.show()
         else:
             # Labels read as headings ("Institution") while Firestore stores

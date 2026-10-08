@@ -201,7 +201,9 @@ class GroundStation(QtWidgets.QMainWindow):
                   self.clock_label, self.packets_label, self.rate_label):
             row.addWidget(w, 0, QtCore.Qt.AlignBottom)
 
-        profile_btn = QtWidgets.QPushButton("⚙")
+        profile_btn = QtWidgets.QPushButton()
+        profile_btn.setIcon(theme.icon("gear", theme.SLATE, 17))
+        profile_btn.setIconSize(QtCore.QSize(17, 17))
         profile_btn.setObjectName("settingsBtn")
         profile_btn.setFixedSize(34, 34)
         profile_btn.setCursor(QtCore.Qt.PointingHandCursor)
@@ -232,6 +234,10 @@ class GroundStation(QtWidgets.QMainWindow):
         self.telemetry = TelemetryPanel()
         self.telemetry.setMinimumWidth(360)
         self.telemetry.setMaximumWidth(460)
+        # No drop shadow here: the ground is #000000, so a black shadow in the
+        # GAP beside the panel measured a 1% luminance change — invisible, and
+        # it costs an offscreen render of the whole panel on every repaint.
+        # Depth on this background comes from the raised card tone instead.
         body.addWidget(self.telemetry, 0)
 
         # ── Centre ────────────────────────────────────────────────────────────
@@ -553,7 +559,7 @@ class GroundStation(QtWidgets.QMainWindow):
             self._do_serial_reconnect()
             self.com_label.setText(f"COM: {self.com_port}")
             self.serial_timer.start(SERIAL_POLL_MS)
-            self.show_toast("Serial reconnected ✓")
+            self.show_toast("Serial reconnected", "success")
             print("[GCS] Manual reconnect successful")
         except Exception as e:
             ThemedMessageBox.critical(
@@ -1071,7 +1077,7 @@ class GroundStation(QtWidgets.QMainWindow):
 
     # ── User profile / settings ───────────────────────────────────────────────
     def _open_user_profile(self):
-        """Open the UserProfileDialog when the ⚙ button is clicked."""
+        """Open the UserProfileDialog when the gear button is clicked."""
         dlg = UserProfileDialog(email=self.user_email, parent=self)
         dlg.logout_requested.connect(self._do_logout)
         dlg.exec_()
@@ -1102,27 +1108,69 @@ class GroundStation(QtWidgets.QMainWindow):
         Toast(self, text, kind)
 
     def _open_graph_popup(self, graph_widget: MiniGraph):
+        # One window per graph: double-clicking the same mini graph used to
+        # stack another popup behind the last one.
+        for existing in self.graph_popups:
+            if existing.source_graph is graph_widget:
+                existing.raise_()
+                existing.activateWindow()
+                return
         popup = GraphPopup(graph_widget)
+        popup.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+        popup.destroyed.connect(lambda _=None, p=popup: self._forget_popup(p))
         popup.show()
         self.graph_popups.append(popup)
+
+    def _forget_popup(self, popup):
+        if popup in self.graph_popups:
+            self.graph_popups.remove(popup)
+
+    # Object names the application stylesheet gives a solid background to.
+    _OPAQUE_NAMES = frozenset({"TelemetryPanel", "RightPanel", "appBar",
+                               "groupBox"})
+
+    def _is_opaque(self, w: QtWidgets.QWidget) -> bool:
+        """Whether this widget actually paints over the sky behind it."""
+        if isinstance(w, (theme.TabCard, MiniGraph)):
+            return True          # both fill their own rounded card
+        if w.objectName() in self._OPAQUE_NAMES:
+            return True
+        if w.autoFillBackground() or w.testAttribute(QtCore.Qt.WA_OpaquePaintEvent):
+            return True
+        return "background" in w.styleSheet()
 
     def _sky_region(self) -> QtGui.QRegion:
         """The part of the window where sky is actually visible.
 
         A plain update() repaints the whole window, which made Qt recomposite
         every panel and label thirty times a second: 62% of a core to achieve
-        13 fps, measured. The panels are opaque, so subtracting their
-        rectangles leaves only the gaps and margins that the animation can
-        actually be seen through, and repainting just those is cheap.
+        13 fps, measured. Subtracting the opaque surfaces leaves only the gaps
+        and margins the animation can be seen through, and repainting just
+        those is cheap.
+
+        The test has to be opacity, not parentage. Subtracting every direct
+        child of `central` also removed the centre column — a bare QFrame with
+        no background at all — so the stars inside its gaps were painted once
+        and then never advanced again. Transparent containers are descended
+        into instead, so their opaque children still earn the saving.
         """
         region = QtGui.QRegion(self.rect())
         central = self.centralWidget()
         if central is None:
             return region
-        for child in central.findChildren(QtWidgets.QWidget):
-            if child.isVisible() and child.parent() is central:
-                top_left = child.mapTo(self, QtCore.QPoint(0, 0))
-                region -= QtGui.QRegion(QtCore.QRect(top_left, child.size()))
+
+        stack = [c for c in central.children()
+                 if isinstance(c, QtWidgets.QWidget)]
+        while stack:
+            w = stack.pop()
+            if not w.isVisible():
+                continue
+            if self._is_opaque(w):
+                top_left = w.mapTo(self, QtCore.QPoint(0, 0))
+                region -= QtGui.QRegion(QtCore.QRect(top_left, w.size()))
+            else:
+                stack.extend(c for c in w.children()
+                             if isinstance(c, QtWidgets.QWidget))
         return region
 
     def _tick_background(self):
@@ -1223,8 +1271,9 @@ class _ReconnectDialog(QtWidgets.QDialog):
 
         # Icon + title
         hdr = QtWidgets.QHBoxLayout()
-        self._icon = QtWidgets.QLabel("⚠")
-        self._icon.setStyleSheet(f"color:{_RED}; font-size:28px; margin-right:10px;")
+        self._icon = QtWidgets.QLabel()
+        self._icon.setPixmap(theme.icon("warning", theme.ALARM, 26).pixmap(26, 26))
+        self._icon.setStyleSheet("margin-right:10px;")
         self._icon.setFixedWidth(38)
         self._title = QtWidgets.QLabel("COM PORT DISCONNECTED")
         self._title.setStyleSheet(f"color:{_RED}; font-size:14px; font-weight:bold;")
@@ -1269,8 +1318,7 @@ class _ReconnectDialog(QtWidgets.QDialog):
 
     def set_reconnected(self):
         self._dot_timer.stop()
-        self._icon.setText("✅")
-        self._icon.setStyleSheet(f"color:{_GREEN}; font-size:28px; margin-right:10px;")
+        self._icon.setPixmap(theme.icon("check", theme.OK, 26).pixmap(26, 26))
         self._title.setText("LINK RESTORED")
         self._title.setStyleSheet(f"color:{_GREEN}; font-size:14px; font-weight:bold;")
         self._msg.setText("CubeSat connection successfully re-established.")

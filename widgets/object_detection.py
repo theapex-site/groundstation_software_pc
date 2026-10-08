@@ -6,7 +6,7 @@ APEX GCS — Object Detection Dialog
 A PyQt5 popup dialog that performs object detection on downlinked images.
 
 Features:
-  - Triggered from "📤 Start Object Detection" button in RightPanel
+  - Triggered from the "Start Object Detection" button in RightPanel
   - "Last Captured" button auto-loads latest image from APEX_GCS_Saved/images/camera/
   - Upload button for manual image selection
   - Live annotated preview with coloured bounding boxes
@@ -541,12 +541,13 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         btn_row = QtWidgets.QHBoxLayout()
         btn_row.setSpacing(8)
 
-        self._btn_last    = self._make_btn("📷  Last Captured",  self._load_last_captured, accent=True)
-        self._btn_upload  = self._make_btn("📂  Upload Image",   self._upload_image)
-        self._btn_test    = self._make_btn("▶  Test",            self._run_detect)
-        self._btn_save    = self._make_btn("💾  Save",           self._save_result)
-        self._btn_clear   = self._make_btn("✕  Clear",           self._clear)
-        self._btn_close   = self._make_btn("✖  Close",           self.close)
+        self._btn_last    = self._make_btn("Last Captured", self._load_last_captured, accent=True,
+                                        icon_name="camera")
+        self._btn_upload  = self._make_btn("Upload Image", self._upload_image, icon_name="folder")
+        self._btn_test    = self._make_btn("Test", self._run_detect, icon_name="scan")
+        self._btn_save    = self._make_btn("Save", self._save_result, icon_name="save")
+        self._btn_clear   = self._make_btn("Clear", self._clear, icon_name="cross")
+        self._btn_close   = self._make_btn("Close", self.close, icon_name="cross")
 
         for b in (self._btn_last, self._btn_upload, self._btn_test,
                   self._btn_save, self._btn_clear, self._btn_close):
@@ -594,7 +595,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._img_label.setStyleSheet(f"background:{self._BG}; border-radius:{theme.R_SM}px;")
         self._img_label.setText(
             f"<span style='color:{self._DIM}; font-family:{theme.MONO}; font-size:13px;'>"
-            "Click  📷 Last Captured  or  📂 Upload Image  to begin"
+            "Click  Last Captured  or  Upload Image  to begin"
             "</span>"
         )
         left_layout.addWidget(self._img_label, 1)
@@ -658,8 +659,12 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     #  Widget helpers
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _make_btn(self, text: str, slot, accent=False) -> QtWidgets.QPushButton:
+    def _make_btn(self, text: str, slot, accent=False,
+                  icon_name: str = "") -> QtWidgets.QPushButton:
         b = QtWidgets.QPushButton(text)
+        if icon_name:
+            b.setIcon(theme.icon(icon_name, theme.SLATE, 15))
+            b.setIconSize(QtCore.QSize(15, 15))
         b.setCursor(Qt.PointingHandCursor)
         if accent:
             b.setObjectName("accentBtn")
@@ -1085,7 +1090,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._img_label.setPixmap(QPixmap())
         self._img_label.setText(
             f"<span style='color:{self._DIM}; font-family:{theme.MONO}; font-size:13px;'>"
-            "Click  📷 Last Captured  or  📂 Upload Image  to begin"
+            "Click  Last Captured  or  Upload Image  to begin"
             "</span>"
         )
         self._img_name_lbl.setText("")

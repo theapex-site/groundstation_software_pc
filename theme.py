@@ -22,7 +22,7 @@ from __future__ import annotations
 import os
 import sys
 
-from PyQt5 import QtCore, QtGui, QtWidgets
+from PyQt5 import QtCore, QtGui, QtSvg, QtWidgets
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  Colour — theapex.site/css/style.css
@@ -100,6 +100,11 @@ GAP   = 14
 PAD   = 16
 GUTTER = 22
 
+# Tooltips. Every call site hardcoded 2000ms on tooltips that run to three
+# lines — they expired mid-read. Qt's own default scales with the length of
+# the text; this is that, with a floor that clears a three-line tip.
+TIP_MS = 12000
+
 
 def _resource(*parts: str) -> str:
     base = getattr(sys, "_MEIPASS", None) or os.path.abspath(os.path.dirname(__file__))
@@ -176,20 +181,27 @@ class TabCard(QtWidgets.QGroupBox):
     PAD_X = 14          # inside the heading, left and right of the text
     PAD_Y = 6           # above and below the heading text
     NOTCH = 11          # radius of the fillet into the card's top edge
+    ICON = 14           # heading glyph, square
+    ICON_GAP = 8        # between that glyph and the text
 
-    def __init__(self, title: str = "", parent=None):
+    def __init__(self, title: str = "", parent=None, icon_name: str = ""):
         super().__init__(title, parent)
+        self._icon_name = icon_name
         self._title_font = QtGui.QFont(MONO, pointSize=-1)
         self._title_font.setPixelSize(FS_LABEL)
         self._title_font.setWeight(QtGui.QFont.DemiBold)
         self._title_font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 1.4)
+
+    def _icon_span(self) -> int:
+        return self.ICON + self.ICON_GAP if self._icon_name else 0
 
     def tab_height(self) -> int:
         return QtGui.QFontMetrics(self._title_font).height() + self.PAD_Y * 2
 
     def tab_width(self) -> int:
         fm = QtGui.QFontMetrics(self._title_font)
-        return min(fm.horizontalAdvance(self.title()) + self.PAD_X * 2,
+        return min(fm.horizontalAdvance(self.title())
+                   + self._icon_span() + self.PAD_X * 2,
                    max(self.width() - R_CARD - self.NOTCH, 40))
 
     def paintEvent(self, event):
@@ -226,9 +238,16 @@ class TabCard(QtWidgets.QGroupBox):
         pen.setWidthF(1.0)
         p.strokePath(path, pen)
 
+        text_x = self.PAD_X + self._icon_span()
+        if self._icon_name:
+            pix = icon(self._icon_name, SLATE, self.ICON).pixmap(
+                self.ICON, self.ICON)
+            p.drawPixmap(QtCore.QPoint(self.PAD_X,
+                                       int((th - self.ICON) / 2)), pix)
+
         p.setFont(self._title_font)
         p.setPen(QtGui.QColor(SLATE))
-        p.drawText(QtCore.QRectF(self.PAD_X, 0, tw - self.PAD_X, th),
+        p.drawText(QtCore.QRectF(text_x, 0, tw - text_x, th),
                    QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, self.title())
         p.end()
 
@@ -243,13 +262,17 @@ def repolish(*widgets: QtWidgets.QWidget) -> None:
 
 
 def shadow(widget: QtWidgets.QWidget, blur: int = 34, dy: int = 10,
-           alpha: int = 130) -> None:
+           alpha: int = 130) -> QtWidgets.QGraphicsDropShadowEffect:
     """
     Qt stylesheets have no box-shadow; this is the supported equivalent.
 
     The site puts 0 20px 50px rgba(0,0,0,.5) under its modals, which is what
     gives the panels their lift. Flat 1px borders everywhere is why the old
     build read as a utility rather than a product.
+
+    The layout gap around a panel is only GAP px, so the falloff is tuned to
+    be read within that rather than copying the site's 50px blur, which would
+    simply be clipped.
     """
     effect = QtWidgets.QGraphicsDropShadowEffect(widget)
     effect.setBlurRadius(blur)
@@ -257,6 +280,94 @@ def shadow(widget: QtWidgets.QWidget, blur: int = 34, dy: int = 10,
     effect.setYOffset(dy)
     effect.setColor(QtGui.QColor(0, 0, 0, alpha))
     widget.setGraphicsEffect(effect)
+    return effect
+
+
+class _HoverGlow(QtCore.QObject):
+    """Blooms a teal glow behind a widget while the cursor is over it.
+
+    The site lifts its buttons 2px on hover and sits its cards on a dark
+    shadow. Neither transfers here. Animating `pos` fights the layout, which
+    owns the geometry and puts it back on the next relayout; and a black
+    shadow over a #000000 ground is invisible — measured at a 1% change in the
+    gap beside a panel. What the site actually reads as depth on dark is the
+    radial glow on its cards, so that is what this animates.
+    """
+
+    def __init__(self, widget: QtWidgets.QWidget, radius: int):
+        super().__init__(widget)
+        self._radius = radius
+        self._fx = QtWidgets.QGraphicsDropShadowEffect(widget)
+        self._fx.setOffset(0, 0)
+        self._fx.setBlurRadius(0)
+        self._fx.setColor(QtGui.QColor(45, 212, 191, 150))   # TEAL
+        widget.setGraphicsEffect(self._fx)
+
+        self._anim = QtCore.QPropertyAnimation(self._fx, b"blurRadius", self)
+        self._anim.setDuration(130)
+        self._anim.setEasingCurve(QtCore.QEasingCurve.OutCubic)
+        widget.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Enter:
+            self._to(self._radius)
+        elif event.type() == QtCore.QEvent.Leave:
+            self._to(0)
+        return False
+
+    def _to(self, radius: int):
+        self._anim.stop()
+        self._anim.setStartValue(self._fx.blurRadius())
+        self._anim.setEndValue(radius)
+        self._anim.start()
+
+
+def hover_lift(widget: QtWidgets.QWidget, radius: int = 22) -> None:
+    """Give `widget` a teal glow that blooms under the cursor."""
+    _HoverGlow(widget, radius)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Icons
+# ══════════════════════════════════════════════════════════════════════════════
+_ICON_CACHE: dict[tuple[str, str, int], QtGui.QIcon] = {}
+
+
+def icon(name: str, color: str = SLATE, size: int = 16) -> QtGui.QIcon:
+    """
+    A monochrome line icon from assets/icons, stroked in `color`.
+
+    The app used ~50 colour emoji, which render in the system's own palette at
+    whatever weight the emoji font decides — four unrelated hues in a heading
+    row, and a different set again on the buttons. These are one stroke weight
+    on one grid, tinted from the tokens above, so a heading reads as a heading
+    rather than as a sticker.
+    """
+    key = (name, color, size)
+    if key in _ICON_CACHE:
+        return _ICON_CACHE[key]
+
+    path = _resource("assets", "icons", f"{name}.svg")
+    if not os.path.exists(path):
+        return QtGui.QIcon()
+
+    with open(path, "r", encoding="utf-8") as fh:
+        svg = fh.read().replace("CURRENTCOLOR", color)
+
+    renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode("utf-8")))
+    ratio = QtWidgets.QApplication.instance().devicePixelRatio() \
+        if QtWidgets.QApplication.instance() else 1.0
+    pix = QtGui.QPixmap(int(size * ratio), int(size * ratio))
+    pix.setDevicePixelRatio(ratio)
+    pix.fill(QtCore.Qt.transparent)
+    painter = QtGui.QPainter(pix)
+    painter.setRenderHint(QtGui.QPainter.Antialiasing)
+    renderer.render(painter)
+    painter.end()
+
+    result = QtGui.QIcon(pix)
+    _ICON_CACHE[key] = result
+    return result
 
 
 # ══════════════════════════════════════════════════════════════════════════════

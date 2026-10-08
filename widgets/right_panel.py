@@ -94,8 +94,23 @@ class CubeSat3D(QGLWidget):
         self.pitch, self.roll, self.yaw = pitch, roll, yaw
         self.update()
 
+    def resizeEvent(self, event):
+        # A GL viewport is a hard rectangle; every other surface in the app
+        # takes a radius token, so mask it to the same curve.
+        super().resizeEvent(event)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(self.rect()),
+                            theme.R_CTRL, theme.R_CTRL)
+        rounded = QtGui.QRegion(path.toFillPolygon().toPolygon())
+        if not rounded.isEmpty():
+            self.setMask(rounded)
+
     # ── OpenGL overrides ──────────────────────────────────────────────────────
     def initializeGL(self):
+        # Without this the buffer clears to GL's default black, which sat as a
+        # visibly darker rectangle inside a {RAISED} card. Match the card.
+        c = QtGui.QColor(theme.RAISED)
+        glClearColor(c.redF(), c.greenF(), c.blueF(), 1.0)
         glEnable(GL_DEPTH_TEST)
         glEnable(GL_LIGHTING)
         glEnable(GL_LIGHT0)
@@ -160,10 +175,15 @@ class RightPanel(QtWidgets.QFrame):
 
     def __init__(self):
         super().__init__()
+        # theme.qss() styles "#TelemetryPanel, #RightPanel", and an #id
+        # selector matches on objectName — which this never set, so the rule
+        # only ever reached the left panel. That is why the left side had a
+        # panel surface and the right side's cards floated bare on the sky.
+        self.setObjectName("RightPanel")
         layout = QtWidgets.QVBoxLayout(self)
 
-        def group(name: str) -> theme.TabCard:
-            g = theme.TabCard(name)
+        def group(name: str, icon_name: str = "") -> theme.TabCard:
+            g = theme.TabCard(name, icon_name=icon_name)
             grid = QtWidgets.QGridLayout()
             # Room for the heading, which is painted as part of the outline.
             grid.setContentsMargins(12, g.tab_height() + 6, 12, 10)
@@ -171,7 +191,7 @@ class RightPanel(QtWidgets.QFrame):
             return g
 
         # ── CubeSat Orientation ───────────────────────────────────────────────
-        imu = group("🧭 CUBESAT ORIENTATION")
+        imu = group("CUBESAT ORIENTATION", "compass")
         self.cubesat_3d = CubeSat3D()
         self.cubesat_3d.setMinimumHeight(170)
         imu.layout().addWidget(self.cubesat_3d, 0, 0, 1, 2)
@@ -190,13 +210,13 @@ class RightPanel(QtWidgets.QFrame):
         layout.addWidget(imu)
 
         # ── Raw Gas Sensor ────────────────────────────────────────────────────
-        gas = group("🫧 RAW GAS SENSOR VALUES")
+        gas = group("RAW GAS SENSOR VALUES", "bubbles")
         gas.setToolTip(
             "Raw gas resistance reading from the onboard gas sensor.\n"
             "Used to estimate air quality values like IAQ, eCO2, and VOC.\n"
             "Higher resistance generally indicates cleaner air."
         )
-        gas.setToolTipDuration(2000)
+        gas.setToolTipDuration(theme.TIP_MS)
 
         lbl = QtWidgets.QLabel("Gas Resistance")
         lbl.setObjectName("nameLabel")
@@ -208,7 +228,7 @@ class RightPanel(QtWidgets.QFrame):
             "Gas sensor resistance value measured in Ohms.\n"
             "Used internally to calculate IAQ, eCO2, and VOC levels."
         )
-        self.gas_resistance.setToolTipDuration(2000)
+        self.gas_resistance.setToolTipDuration(theme.TIP_MS)
         gas.layout().addWidget(lbl, 0, 0)
         gas.layout().addWidget(self.gas_resistance, 0, 1)
         # Keep old dict interface so ground_station.py doesn't need changes
@@ -217,22 +237,29 @@ class RightPanel(QtWidgets.QFrame):
 
         # ── Control Panel ─────────────────────────────────────────────────────
         control = group("CONTROL PANEL")
+        # (label, icon, command, tooltip, confirm-first). The icon is a real
+        # QIcon rather than an emoji in the label: emoji render in the system
+        # palette at the emoji font's own weight, so eight buttons carried
+        # five unrelated hues down one column.
         buttons = [
-            ("📸 Capture Image",          "C\n",  "Command CubeSat camera to capture a new image.",      False),
-            ("📤 Transmit Image",          "S\n",  "Transmit stored payload image to ground station.",    False),
-            ("📤 Transmit CW Signal",      "B\n",  "Transmit Morse CW beacon signal.",                    False),
-            ("📤 Start Object Detection",  "",     "Run object detection on a downlinked image.",          False),
-            ("🛜 Send Telemetry",          "T\n",  "Request current telemetry packet.",                   False),
-            ("🔄 Restart System",          "R\n",  "Reboot onboard computer.",                            True),
-            ("🔌 Reconnect Serial",         "A\n",  "Disconnect and reconnect the serial port.",            False),
-            ("💾 Save Mission",            None,   "Save current mission logs.",                          False),
+            ("Capture Image",         "camera",    "C\n", "Command CubeSat camera to capture a new image.",     False),
+            ("Transmit Image",        "upload",    "S\n", "Transmit stored payload image to ground station.",   False),
+            ("Transmit CW Signal",    "broadcast", "B\n", "Transmit Morse CW beacon signal.",                   False),
+            ("Start Object Detection","scan",      "",    "Run object detection on a downlinked image.",        False),
+            ("Send Telemetry",        "antenna",   "T\n", "Request current telemetry packet.",                  False),
+            ("Restart System",        "power",     "R\n", "Reboot onboard computer.",                           True),
+            ("Reconnect Serial",      "plug",      "A\n", "Disconnect and reconnect the serial port.",          False),
+            ("Save Mission",          "save",      None,  "Save current mission logs.",                         False),
         ]
-        for i, (text, command, tip, confirm) in enumerate(buttons):
+        for i, (text, icon_name, command, tip, confirm) in enumerate(buttons):
             btn = QtWidgets.QPushButton(text)
+            btn.setIcon(theme.icon(icon_name, theme.SLATE, 16))
+            btn.setIconSize(QtCore.QSize(16, 16))
             btn.setToolTip(tip)
-            btn.setToolTipDuration(2000)
+            btn.setToolTipDuration(theme.TIP_MS)
+            theme.hover_lift(btn)
 
-            if text == "📤 Start Object Detection":
+            if text == "Start Object Detection":
                 btn.clicked.connect(self._open_object_detection)
             elif command:
                 if confirm:
@@ -243,14 +270,14 @@ class RightPanel(QtWidgets.QFrame):
                     btn.clicked.connect(
                         lambda _, c=command, t=text: self.command_signal.emit(c, t)
                     )
-            if text == "💾 Save Mission":
+            if text == "Save Mission":
                 btn.clicked.connect(self._save_mission)
 
             control.layout().addWidget(btn, i, 0, 1, 2)
         layout.addWidget(control)
 
         # ── Map ───────────────────────────────────────────────────────────────
-        map_group = theme.TabCard("📍 CUBESAT LOCATION")
+        map_group = theme.TabCard("CUBESAT LOCATION", icon_name="pin")
         map_group.setToolTip(
             "Displays the real-time geographical location of the CubeSat.\n"
             "Position is updated using GPS latitude and longitude telemetry.\n"
