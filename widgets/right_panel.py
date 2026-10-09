@@ -40,16 +40,36 @@ else:
 MAP_MOVE_MIN_DEG = 0.0005
 MAP_RELOAD_MIN_S = 15.0
 
+class _ClickCatcher(QtWidgets.QWidget):
+    """A transparent pane whose only job is to see a double-click."""
+
+    doubleClicked = QtCore.pyqtSignal()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.doubleClicked.emit()
+        super().mouseDoubleClickEvent(event)
+
+
 class _MapView(QtWidgets.QWidget):
     """
     The embedded map.
 
-    There used to be a fully transparent overlay stretched across this widget,
-    with WA_TransparentForMouseEvents off, purely so a double-click could be
-    caught. That swallowed every mouse event, so the map could not be panned,
-    zoomed or scrolled at all — while its tooltip claimed it was interactive.
-    The overlay is gone; "Open in browser" is an explicit button instead.
+    A fully transparent overlay stretched across this widget used to exist
+    purely so a double-click could be caught, and was removed because it
+    swallowed every mouse event — the map could not be panned, zoomed or
+    scrolled at all, while its tooltip still claimed it was interactive.
+
+    It is back, because double-click-to-open-in-browser replaces the
+    explicit button that did the same thing. A QWebEngineView consumes
+    mouse input itself and never lets a parent's mouseDoubleClickEvent see
+    it, so there is no way to catch the gesture without something in front
+    of the frame — which means the same trade-off applies again: panning,
+    zooming and scrolling the embedded frame no longer work. The tooltip
+    says so now instead of promising otherwise.
     """
+
+    doubleClicked = QtCore.pyqtSignal()
 
     def __init__(self):
         super().__init__()
@@ -60,14 +80,23 @@ class _MapView(QtWidgets.QWidget):
         self._web.setStyleSheet("background: transparent;")
         self._layout.addWidget(self._web)
 
+        self._overlay = _ClickCatcher(self)
+        self._overlay.setCursor(QtCore.Qt.PointingHandCursor)
+        self._overlay.doubleClicked.connect(self.doubleClicked)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._overlay.setGeometry(self.rect())
+        self._overlay.raise_()
+
     def setHtml(self, html):
         self._web.setHtml(html)
 
     def setToolTip(self, text):
-        self._web.setToolTip(text)
+        self._overlay.setToolTip(text)
 
     def setToolTipDuration(self, ms):
-        self._web.setToolTipDuration(ms)
+        self._overlay.setToolTipDuration(ms)
 # ══════════════════════════════════════════════════════════════════════════════
 #  CubeSat3D
 # ══════════════════════════════════════════════════════════════════════════════
@@ -202,6 +231,7 @@ class RightPanel(QtWidgets.QFrame):
         outer.addWidget(scroll, 1)
 
         layout = QtWidgets.QVBoxLayout(content)
+        self._layout = layout
 
         def group(name: str, icon_name: str = "") -> theme.TabCard:
             g = theme.TabCard(name, icon_name=icon_name)
@@ -214,8 +244,13 @@ class RightPanel(QtWidgets.QFrame):
         # ── CubeSat Orientation ───────────────────────────────────────────────
         imu = group("CUBESAT ORIENTATION", "compass")
         self.cubesat_3d = CubeSat3D()
-        self.cubesat_3d.setMinimumHeight(170)
+        # Taller now that the gas card below it is gone — the model was
+        # letterboxed into 170px while a one-row card sat underneath.
+        self.cubesat_3d.setMinimumHeight(260)
+        self.cubesat_3d.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                                      QtWidgets.QSizePolicy.Expanding)
         imu.layout().addWidget(self.cubesat_3d, 0, 0, 1, 2)
+        imu.layout().setRowStretch(0, 1)
 
         self.imu_labels: dict[str, QtWidgets.QLabel] = {}
         for i, (axis, unit) in enumerate([("Pitch", "°"), ("Roll", "°"), ("Yaw", "°")], start=1):
@@ -230,31 +265,11 @@ class RightPanel(QtWidgets.QFrame):
             self.imu_labels[axis] = val
         layout.addWidget(imu)
 
-        # ── Raw Gas Sensor ────────────────────────────────────────────────────
-        gas = group("RAW GAS SENSOR VALUES", "bubbles")
-        gas.setToolTip(
-            "Raw gas resistance reading from the onboard gas sensor.\n"
-            "Used to estimate air quality values like IAQ, eCO2, and VOC.\n"
-            "Higher resistance generally indicates cleaner air."
-        )
-        gas.setToolTipDuration(theme.TIP_MS)
-
-        lbl = QtWidgets.QLabel("Gas Resistance")
-        lbl.setObjectName("nameLabel")
-        self.gas_resistance = QtWidgets.QLabel("--")
-        self.gas_resistance.setObjectName("valueLabel")
-        self.gas_resistance.setAlignment(QtCore.Qt.AlignRight)
-        self.gas_resistance.unit = "Ω"
-        self.gas_resistance.setToolTip(
-            "Gas sensor resistance value measured in Ohms.\n"
-            "Used internally to calculate IAQ, eCO2, and VOC levels."
-        )
-        self.gas_resistance.setToolTipDuration(theme.TIP_MS)
-        gas.layout().addWidget(lbl, 0, 0)
-        gas.layout().addWidget(self.gas_resistance, 0, 1)
-        # Keep old dict interface so ground_station.py doesn't need changes
-        self.gas_labels = {"Gas Resistance": self.gas_resistance}
-        layout.addWidget(gas)
+        # The Raw Gas Sensor card used to sit here: one row showing a raw
+        # resistance in ohms, which is an input to the air-quality maths
+        # rather than something an operator acts on. The value still arrives
+        # in every packet, still drives AQI / eCO2 / VOC, and is still
+        # graphable in RTG — it just no longer takes a card on the dashboard.
 
         # ── Control Panel ─────────────────────────────────────────────────────
         control = group("CONTROL PANEL")
@@ -266,6 +281,9 @@ class RightPanel(QtWidgets.QFrame):
         # The id is what the handler keys on: two buttons used to be wired by
         # comparing their own caption, so editing a label silently unwired it.
         self.command_buttons: dict[str, QtWidgets.QPushButton] = {}
+        # Each button's resting state, so a temporary override (Transmit
+        # Image becoming Cancel mid-downlink) has something to restore.
+        self._button_defaults: dict[str, dict] = {}
         sections = [
             ("PAYLOAD", [
                 ("capture",  "Capture Image",          "camera",    "C\n", "Ctrl+Shift+C",
@@ -320,24 +338,32 @@ class RightPanel(QtWidgets.QFrame):
                 theme.hover_lift(btn)
 
                 if btn_id == "detect":
-                    btn.clicked.connect(self._open_object_detection)
+                    default_slot = self._open_object_detection
                 elif btn_id == "save":
-                    btn.clicked.connect(self._save_mission)
+                    default_slot = self._save_mission
                 elif kind == "danger":
-                    btn.clicked.connect(
-                        lambda _, c=command, t=text: self._confirm_command(c, t))
+                    default_slot = lambda _, c=command, t=text: self._confirm_command(c, t)
                 else:
-                    btn.clicked.connect(
-                        lambda _, c=command, t=text: self.command_signal.emit(c, t))
+                    default_slot = lambda _, c=command, t=text: self.command_signal.emit(c, t)
+                btn.clicked.connect(default_slot)
 
                 self.command_buttons[btn_id] = btn
+                self._button_defaults[btn_id] = {
+                    "text": text, "icon_name": icon_name,
+                    "danger": kind == "danger", "slot": default_slot,
+                }
                 control.layout().addWidget(btn, row, 0, 1, 2)
                 row += 1
 
         layout.addWidget(control)
 
         # ── Map ───────────────────────────────────────────────────────────────
-        map_group = theme.TabCard("CUBESAT LOCATION", icon_name="pin")
+        # Headless: GroundStation detaches this into the centre strip below
+        # the payload frame, next to the flag monitor — GPS's old spot —
+        # where a "CUBESAT LOCATION" heading would repeat the page's own
+        # "GPS STATUS" card right next to it.
+        map_group = theme.TabCard(headless=True)
+        self.map_card = map_group
         map_group.setToolTip(
             "Displays the real-time geographical location of the CubeSat.\n"
             "Position is updated using GPS latitude and longitude telemetry.\n"
@@ -347,27 +373,18 @@ class RightPanel(QtWidgets.QFrame):
         map_layout.setContentsMargins(12, map_group.tab_height() + 6, 12, 10)
         map_group.setLayout(map_layout)
 
-        self._map_lat = DEFAULT_LAT
-        self._map_lon = DEFAULT_LON
         # What the embedded frame is currently showing, as opposed to the
         # latest position received. load_map() compares the two.
         self._map_shown_lat = DEFAULT_LAT
         self._map_shown_lon = DEFAULT_LON
         self._map_loaded_at = None
 
-        open_row = QtWidgets.QHBoxLayout()
-        open_row.setContentsMargins(0, 0, 0, 0)
-        open_row.addStretch()
-        open_btn = QtWidgets.QPushButton("Open in browser")
-        open_btn.setObjectName("ghostBtn")
-        open_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        open_btn.setToolTip("Open this position in your browser and copy the link.")
-        open_btn.clicked.connect(self._open_map_in_browser)
-        open_row.addWidget(open_btn)
-        map_layout.addLayout(open_row)
-
+        # No "Open in browser" row — headless and detached into the centre
+        # strip, this card is just the map now. Double-click it instead.
         self.map_view = _MapView()
-        self.map_view.setToolTip("CubeSat position from GPS telemetry. Drag to pan, scroll to zoom.")
+        self.map_view.setToolTip(
+            "CubeSat position from GPS telemetry.\nDouble-click to open it in your browser.")
+        self.map_view.doubleClicked.connect(self._open_map_in_browser)
         map_layout.addWidget(self.map_view)
         layout.addWidget(map_group, 1)
 
@@ -383,17 +400,13 @@ class RightPanel(QtWidgets.QFrame):
         every time. The frame never finished loading: it flashed white, lost
         its tiles and reset any pan or zoom the operator had made.
 
-        The position is always recorded so "Open in browser" stays current,
-        but the frame is only rebuilt when the CubeSat has actually moved far
+        The frame is only rebuilt when the CubeSat has actually moved far
         enough to matter, and never more than once every MAP_RELOAD_MIN_S.
         """
         try:
             lat_f, lon_f = float(lat), float(lon)
         except (TypeError, ValueError):
             return
-
-        self._map_lat = lat_f
-        self._map_lon = lon_f
 
         now = time.monotonic()
         if self._map_loaded_at is not None:
@@ -418,9 +431,44 @@ class RightPanel(QtWidgets.QFrame):
 
     def _open_map_in_browser(self):
         import webbrowser
-        url = f"https://www.google.com/maps?q={self._map_lat},{self._map_lon}&z=13"
-        QtWidgets.QApplication.clipboard().setText(url)
+        url = (f"https://www.google.com/maps?q="
+               f"{self._map_shown_lat},{self._map_shown_lon}&z=13")
         webbrowser.open(url)
+
+    def detach_map_card(self) -> QtWidgets.QWidget:
+        """Hand the map card to whoever wants to place it.
+
+        GroundStation puts it in the centre strip, under the payload frame,
+        next to the flag monitor — where GPS used to sit before it moved
+        back to the telemetry panel. load_map() and the rest of the map's
+        state stay on this class; only the card's parent changes. Used
+        standalone — in the preview tool — the panel keeps it and this is
+        simply never called.
+        """
+        self._layout.removeWidget(self.map_card)
+        self.map_card.setParent(None)
+        return self.map_card
+
+    def set_button_override(self, btn_id: str, *, text: str = None,
+                             icon_name: str = None, danger: bool = False,
+                             slot=None) -> None:
+        """Temporarily swap a command button's label, icon, colour and handler.
+
+        Transmit Image becomes Cancel for the duration of a downlink — the
+        same slot in the panel the operator was already looking at, rather
+        than a separate cancel control somewhere else. Call with no keyword
+        arguments to put the button back exactly as it was built.
+        """
+        btn = self.command_buttons[btn_id]
+        default = self._button_defaults[btn_id]
+        btn.setText(text if text is not None else default["text"])
+        use_icon = icon_name if icon_name is not None else default["icon_name"]
+        use_danger = danger or (text is None and default["danger"])
+        btn.setIcon(theme.icon(use_icon, theme.ALARM if use_danger else theme.SLATE, 16))
+        btn.setObjectName("dangerBtn" if use_danger else "")
+        theme.repolish(btn)
+        btn.clicked.disconnect()
+        btn.clicked.connect(slot if slot is not None else default["slot"])
 
     # ── internal ──────────────────────────────────────────────────────────────
     @staticmethod

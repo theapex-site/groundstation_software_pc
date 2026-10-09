@@ -7,10 +7,27 @@ flag monitor, and colour-coded health indicators.
 import html
 import math
 from datetime import datetime
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
 
 import theme
 from config import DEGREE
+
+
+class _FlagLogView(QtWidgets.QTextEdit):
+    """The flag monitor's own QTextEdit, plus a double-click to detach it.
+
+    Double-click would ordinarily just select a word in a QTextEdit; this
+    still does that (selection is harmless and sometimes useful for
+    copying one line) but also opens the full log in its own window, the
+    same gesture a MiniGraph uses to pop out.
+    """
+
+    doubleClicked = QtCore.pyqtSignal()
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton:
+            self.doubleClicked.emit()
+        super().mouseDoubleClickEvent(event)
 
 
 class TelemetryPanel(QtWidgets.QFrame):
@@ -21,9 +38,11 @@ class TelemetryPanel(QtWidgets.QFrame):
     def __init__(self):
         super().__init__()
         self.setObjectName("TelemetryPanel")
-        # (timestamp, line) kept behind the view so the filter is reversible
-        # and Copy All returns everything, not just what is on screen.
+        # (timestamp, line) kept behind the view so a detached window can be
+        # filled with everything seen so far, not just what is on screen.
         self._flag_lines: list[tuple[str, str]] = []
+        self._flag_window = None
+        self._flag_window_view = None
         layout = QtWidgets.QVBoxLayout(self)
 
         # ── Heading row (title + settings icon) ──────────────────────────────
@@ -160,6 +179,7 @@ class TelemetryPanel(QtWidgets.QFrame):
         self.lat  = add_row(gps.layout(), 1, "Latitude",  DEGREE, "Geographical latitude position.")
         self.lon  = add_row(gps.layout(), 2, "Longitude", DEGREE, "Geographical longitude position.")
         self.hdop = add_row(gps.layout(), 3, "HDOP", "", "Horizontal Dilution of Precision – GPS accuracy indicator.")
+        self.gps_card = gps
         content_lay.addWidget(gps)
 
         # ── VITALS ────────────────────────────────────────────────────────────
@@ -179,48 +199,53 @@ class TelemetryPanel(QtWidgets.QFrame):
         content_lay.addWidget(air)
 
         # ── FLAG MONITOR ──────────────────────────────────────────────────────
-        flag_group = theme.TabCard("FLAG MONITOR", icon_name="flag")
+        # Headless: this card is detached into the centre strip below the
+        # payload frame, next to the map.
+        flag_group = theme.TabCard(headless=True)
         flag_group.setToolTip(
             "Mission flag log window.\n"
-            "Displays CubeSat and Ground Station event messages."
+            "Displays CubeSat and Ground Station event messages.\n"
+            "Double-click to open the full log in its own window."
         )
 
         flag_layout = QtWidgets.QVBoxLayout()
         flag_layout.setContentsMargins(12, flag_group.tab_height() + 6, 12, 10)
         flag_group.setLayout(flag_layout)
 
-        # Filter + copy row. This is the operator's only event history, so it
-        # needs to be searchable and extractable, not just scrollable.
-        tools_row = QtWidgets.QHBoxLayout()
-        tools_row.setSpacing(8)
-        self.flag_filter = QtWidgets.QLineEdit()
-        self.flag_filter.setPlaceholderText("Filter events…")
-        self.flag_filter.setClearButtonEnabled(True)
-        # ClickFocus, or the scroll area scrolls down to this on launch to
-        # show whatever just took keyboard focus.
-        self.flag_filter.setFocusPolicy(QtCore.Qt.ClickFocus)
-        self.flag_filter.textChanged.connect(self._apply_flag_filter)
-        copy_btn = QtWidgets.QPushButton("Copy All")
-        copy_btn.setObjectName("ghostBtn")
-        copy_btn.setToolTip("Copy the whole event log to the clipboard.")
-        copy_btn.setToolTipDuration(theme.TIP_MS)
-        copy_btn.clicked.connect(self._copy_flags)
-        tools_row.addWidget(self.flag_filter, 1)
-        tools_row.addWidget(copy_btn, 0)
-        flag_layout.addLayout(tools_row)
-
-        self.flag_monitor = QtWidgets.QTextEdit()
+        # No filter box or Copy All here any more — a small card had room
+        # for a text box and a button that mostly sat unused. Double-click
+        # opens the same log full-size instead, where there is room to
+        # actually act on it.
+        self.flag_monitor = _FlagLogView()
         self.flag_monitor.setReadOnly(True)
         # Unbounded growth over a long mission; QTextEdit enforces the cap.
         self.flag_monitor.document().setMaximumBlockCount(self.FLAG_MAX_LINES)
         self.flag_monitor.setToolTip(
             "Mission flags and system alerts.\n"
             "Teal is a ground command, cream a CubeSat event, red a failure.\n"
-            f"Keeps the most recent {self.FLAG_MAX_LINES} lines."
+            f"Keeps the most recent {self.FLAG_MAX_LINES} lines.\n"
+            "Double-click to open the full log in its own window."
         )
         self.flag_monitor.setToolTipDuration(theme.TIP_MS)
+        self.flag_monitor.doubleClicked.connect(self._open_flag_window)
         flag_layout.addWidget(self.flag_monitor)
+        self.flag_card = flag_group
+        self._content_lay = content_lay
         content_lay.addWidget(flag_group, 1)
+
+    def detach_flag_card(self) -> QtWidgets.QWidget:
+        """Hand the event-log card to whoever wants to place it.
+
+        GPS stays here in the left panel — it belongs with the rest of the
+        telemetry readouts. Only the flag monitor moves, into the centre
+        strip under the payload frame, next to the map. It is built here so
+        the update paths and row bookkeeping stay in this class; only its
+        parent changes. Used standalone — in the preview tool — the panel
+        keeps it and this is simply never called.
+        """
+        self._content_lay.removeWidget(self.flag_card)
+        self.flag_card.setParent(None)
+        return self.flag_card
 
     # ── flag monitor ──────────────────────────────────────────────────────────
     _FAIL_WORDS = ("error", "fail", "timeout", "abort", "lost", "invalid")
@@ -250,10 +275,14 @@ class TelemetryPanel(QtWidgets.QFrame):
             bar = self.flag_monitor.verticalScrollBar()
             at_bottom = bar.value() >= bar.maximum() - 4
 
-            if self._flag_visible(line):
-                self.flag_monitor.append(self._flag_html(t, line))
+            html_line = self._flag_html(t, line)
+            self.flag_monitor.append(html_line)
             if at_bottom:
                 bar.setValue(bar.maximum())
+            # The detached window, if the operator has one open, gets every
+            # line as it arrives rather than only what it was seeded with.
+            if self._flag_window_view is not None:
+                self._flag_window_view.append(html_line)
 
             # Bubble up to GroundStation to also write to Excel
             parent = self.parent()
@@ -267,20 +296,37 @@ class TelemetryPanel(QtWidgets.QFrame):
         return (f'<span style="color:{theme.DIM}">[{t}]</span> '
                 f'<span style="color:{colour}">{html.escape(line)}</span>')
 
-    def _flag_visible(self, line: str) -> bool:
-        needle = self.flag_filter.text().strip().lower()
-        return not needle or needle in line.lower()
+    def _open_flag_window(self):
+        """Open the full event log in its own window, same gesture a
+        MiniGraph uses to pop out a graph."""
+        if self._flag_window is None:
+            win = QtWidgets.QMainWindow()
+            win.setWindowTitle("Flag Monitor — APEX GCS")
+            win.resize(900, 600)
+            win.setStyleSheet(f"QMainWindow {{ background-color: {theme.PANEL}; }}")
+            view = QtWidgets.QTextEdit()
+            view.setReadOnly(True)
+            view.document().setMaximumBlockCount(self.FLAG_MAX_LINES)
+            view.setStyleSheet(
+                f"background: {theme.DEEP}; color: {theme.CREAM}; border: none;"
+                f" font-family: '{theme.MONO}'; font-size: {theme.FS_BODY}px;"
+                " padding: 12px;"
+            )
+            for t, line in self._flag_lines:
+                view.append(self._flag_html(t, line))
+            win.setCentralWidget(view)
+            win.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+            win.destroyed.connect(self._forget_flag_window)
+            QtWidgets.QShortcut(QtGui.QKeySequence("Esc"), win, win.close)
+            self._flag_window = win
+            self._flag_window_view = view
+        self._flag_window.show()
+        self._flag_window.raise_()
+        self._flag_window.activateWindow()
 
-    def _apply_flag_filter(self):
-        """Rebuild the view from the kept lines, so filtering is reversible."""
-        self.flag_monitor.clear()
-        for t, line in self._flag_lines:
-            if self._flag_visible(line):
-                self.flag_monitor.append(self._flag_html(t, line))
-
-    def _copy_flags(self):
-        text = "\n".join(f"[{t}] {line}" for t, line in self._flag_lines)
-        QtWidgets.QApplication.clipboard().setText(text)
+    def _forget_flag_window(self, *_):
+        self._flag_window = None
+        self._flag_window_view = None
 
     @staticmethod
     def calculate_air_quality(gas_res: float) -> tuple[int, int, int]:

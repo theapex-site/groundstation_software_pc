@@ -184,9 +184,15 @@ class TabCard(QtWidgets.QGroupBox):
     ICON = 14           # heading glyph, square
     ICON_GAP = 8        # between that glyph and the text
 
-    def __init__(self, title: str = "", parent=None, icon_name: str = ""):
+    def __init__(self, title: str = "", parent=None, icon_name: str = "",
+                 headless: bool = False):
         super().__init__(title, parent)
         self._icon_name = icon_name
+        # A card with no heading tab at all — just the rounded outline.
+        # Used where the card title would be redundant with context (the
+        # map and the flag log both sit under a heading row of their own
+        # in the centre column).
+        self._headless = headless
         self._title_font = QtGui.QFont(MONO, pointSize=-1)
         self._title_font.setPixelSize(FS_LABEL)
         self._title_font.setWeight(QtGui.QFont.DemiBold)
@@ -196,6 +202,8 @@ class TabCard(QtWidgets.QGroupBox):
         return self.ICON + self.ICON_GAP if self._icon_name else 0
 
     def tab_height(self) -> int:
+        if self._headless:
+            return 0
         return QtGui.QFontMetrics(self._title_font).height() + self.PAD_Y * 2
 
     def tab_width(self) -> int:
@@ -210,6 +218,18 @@ class TabCard(QtWidgets.QGroupBox):
 
         w, h = self.width(), self.height()
         r = float(R_CARD)
+
+        if self._headless:
+            # Plain rounded rect — no tab, no fillet, nothing to join.
+            path = QtGui.QPainterPath()
+            path.addRoundedRect(QtCore.QRectF(0, 0, w, h), r, r)
+            p.fillPath(path, QtGui.QColor(RAISED))
+            pen = QtGui.QPen(QtGui.QColor(LINE))
+            pen.setWidthF(1.0)
+            p.strokePath(path, pen)
+            p.end()
+            return
+
         n = float(self.NOTCH)
         th = float(self.tab_height())
         tw = float(self.tab_width())
@@ -386,6 +406,26 @@ QToolTip {{
     padding: 6px 9px;
     font-size: {FS_BODY}px;
 }}
+
+/* No rule here at all meant QMenu — RTG's "+ Add Graph" among others —
+   fell through to the platform's own menu style: white, system font, no
+   relation to anything else on screen. */
+QMenu {{
+    background-color: {RAISED};
+    color: {CREAM};
+    border: 1px solid {LINE};
+    border-radius: {R_SM}px;
+    padding: 4px;
+    font-size: {FS_BODY}px;
+}}
+QMenu::item {{
+    padding: 6px 24px 6px 12px;
+    border-radius: {R_SM}px;
+}}
+QMenu::item:selected {{ background: {TEAL_SOFT}; color: {CREAM}; }}
+QMenu::item:disabled {{ color: {DIM}; }}
+QMenu::separator {{ height: 1px; background: {LINE}; margin: 4px 8px; }}
+QMenu::right-arrow {{ width: 10px; height: 10px; }}
 
 /* ── Panels ─────────────────────────────────────────────────────────────── */
 #TelemetryPanel, #RightPanel {{
@@ -627,8 +667,8 @@ QPushButton#primaryBtn:disabled {{ background: {LINE}; color: {DISABLED}; }}
 QPushButton#dangerBtn {{ border-color: {ALARM_EDGE}; color: {ALARM}; }}
 QPushButton#dangerBtn:hover {{ background: {ALARM_FILL}; color: {CREAM}; border-color: {ALARM}; }}
 
-QPushButton#ghostBtn {{ background: transparent; color: {SLATE}; }}
-QPushButton#ghostBtn:hover {{ border-color: {TEAL}; color: {TEAL}; }}
+QPushButton#ghostBtn, QToolButton#ghostBtn {{ background: transparent; color: {SLATE}; }}
+QPushButton#ghostBtn:hover, QToolButton#ghostBtn:hover {{ border-color: {TEAL}; color: {TEAL}; }}
 
 /* Round icon button. Needs its own font: the glyph is not in the body face,
    and the shared QPushButton rule left-aligns its text. */
@@ -642,6 +682,23 @@ QPushButton#settingsBtn {{
     padding: 0px;
     text-align: center;
 }}
+
+/* RTG — the way into every sensor channel. Reads as a destination rather
+   than a command, so it carries the accent rather than a card outline. */
+QPushButton#rtgBtn {{
+    background: transparent;
+    color: {TEAL};
+    border: 1px solid {TEAL};
+    border-radius: {R_CTRL}px;
+    font-family: "{MONO}";
+    font-size: {FS_LABEL}px;
+    font-weight: 700;
+    letter-spacing: {TRACK_LABEL};
+    padding: 7px 14px;
+    text-align: center;
+}}
+QPushButton#rtgBtn:hover  {{ background: {TEAL}; color: {DEEP}; }}
+QPushButton#rtgBtn:focus  {{ border: 2px solid {CREAM}; }}
 
 /* The profile, as the operator's initials in a teal disc. A gear here meant
    preferences to everyone and opened a profile instead. */
@@ -680,6 +737,24 @@ QProgressBar {{
     font-size: {FS_MICRO}px;
 }}
 QProgressBar::chunk {{ background: {GRADIENT_COOL}; border-radius: {R_SM}px; }}
+
+/* The downlink bar overlaps the payload canvas's own border rather than
+   sitting in a row of its own, so it is set to a specific height by its
+   parent's geometry — the generic height:18px above would otherwise
+   squash its caption text against that fixed box. No border or radius at
+   all: a boxed outline straddling the canvas's own edge read as a stray
+   line sitting above the bar, rather than the bar reading as the canvas's
+   own edge lighting up for the transfer. */
+QProgressBar#downlinkBar {{
+    border: none;
+    border-radius: 0px;
+    text-align: center;
+    background-color: {DEEP};
+    color: {CREAM};
+    font-family: "{MONO}";
+    font-size: {FS_MICRO}px;
+}}
+QProgressBar#downlinkBar::chunk {{ background: {GRADIENT_COOL}; }}
 
 /* ── Inputs ─────────────────────────────────────────────────────────────── */
 QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox {{

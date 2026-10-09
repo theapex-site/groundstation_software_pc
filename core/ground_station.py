@@ -42,6 +42,7 @@ from config import (
 from widgets.telemetry_panel import TelemetryPanel
 from widgets.right_panel      import RightPanel
 from widgets.graphs           import MiniGraph, GraphPopup
+from widgets.rtg              import RTGWindow
 from widgets.dialogs          import (Toast, ThemedMessageBox, UserProfileDialog,
                                      SettingsDialog)
 
@@ -208,6 +209,17 @@ class GroundStation(QtWidgets.QMainWindow):
         # A gear means preferences everywhere else, and here it opened the
         # user's profile. The profile is now the user's initials; the gear
         # opens actual settings.
+        rtg_btn = QtWidgets.QPushButton("RTG")
+        rtg_btn.setObjectName("rtgBtn")
+        rtg_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        rtg_btn.setToolTip("Real-Time Graphs — every sensor channel on one "
+                           "screen.\nShortcut: Ctrl+G")
+        rtg_btn.setToolTipDuration(theme.TIP_MS)
+        rtg_btn.setShortcut(QtGui.QKeySequence("Ctrl+G"))
+        rtg_btn.setAccessibleName("Real-Time Graphs")
+        rtg_btn.clicked.connect(self.open_rtg)
+        row.addWidget(rtg_btn)
+
         settings_btn = QtWidgets.QPushButton()
         settings_btn.setIcon(theme.icon("gear", theme.SLATE, 17))
         settings_btn.setIconSize(QtCore.QSize(17, 17))
@@ -274,6 +286,16 @@ class GroundStation(QtWidgets.QMainWindow):
         # Depth on this background comes from the raised card tone instead.
         body.addWidget(self.telemetry, 0)
 
+        # ── Right panel ───────────────────────────────────────────────────────
+        # Built here, ahead of the centre column, so its map card can be
+        # detached into the centre strip below. It is still placed in the
+        # body layout after the centre column, so the visual order (left,
+        # centre, right) is unaffected by construction order.
+        self.right = RightPanel()
+        self.right.command_signal.connect(self._send_command)
+        self.right.setMinimumWidth(380)
+        self.right.setMaximumWidth(480)
+
         # ── Centre ────────────────────────────────────────────────────────────
         centre = QtWidgets.QFrame()
         cl = QtWidgets.QVBoxLayout(centre)
@@ -287,100 +309,96 @@ class GroundStation(QtWidgets.QMainWindow):
         payload_title.setAlignment(QtCore.Qt.AlignCenter)
         cl.addWidget(payload_title)
 
-        # Progress bar. Hidden when idle rather than left showing the last
-        # transfer's state, and the caption sits beside it rather than under
-        # the chunk, where it was half-legible on the fill boundary.
-        prog_row = QtWidgets.QHBoxLayout()
-        prog_row.setSpacing(12)
-        self.progress = QtWidgets.QProgressBar()
-        self.progress.setTextVisible(False)
-        self.progress.setMaximum(100)
-        self.progress.setValue(0)
-        self.progress_caption = QtWidgets.QLabel("")
-        self.progress_caption.setObjectName("statChip")
-        self.cancel_btn = QtWidgets.QPushButton("Cancel downlink")
-        self.cancel_btn.setObjectName("dangerBtn")
-        self.cancel_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        self.cancel_btn.clicked.connect(self._cancel_downlink)
-        prog_row.addWidget(self.progress, 1)
-        prog_row.addWidget(self.progress_caption)
-        prog_row.addWidget(self.cancel_btn)
-        self.progress_row = QtWidgets.QWidget()
-        self.progress_row.setLayout(prog_row)
-        self.progress_row.hide()
-        cl.addWidget(self.progress_row)
-
-        # Image display
-        # An empty state that says what to do next, rather than a bare
-        # "NO IMAGE RECEIVED" in whatever the default font was.
-        self._image_empty_html = (
-            f"<div align='center' style='color:{theme.SLATE}'>"
-            f"<span style='font-size:{theme.FS_HEAD}px; font-weight:600;'>"
-            "No payload image yet</span><br><br>"
-            f"<span style='font-size:{theme.FS_BODY}px;'>Press "
-            f"<span style='color:{theme.TEAL}'>Transmit Image</span> to downlink "
-            "the latest capture</span></div>"
-        )
-        self.image_label = QtWidgets.QLabel(self._image_empty_html)
-        self.image_label.setScaledContents(False)
-        self.image_label.setAlignment(QtCore.Qt.AlignCenter)
-        self.image_label.setStyleSheet(
-            f"background-color:{theme.DEEP}; border:1px solid {theme.LINE};"
-            f" border-radius:{theme.R_CARD}px;"
-        )
-        self.image_label.setToolTip(
+        # Image display: a stack, so the idle state lives inside the canvas
+        # itself instead of a header collapsing above it — the canvas runs
+        # full height from the top, like before that header existed.
+        self._canvas = _Canvas()
+        self._canvas.setToolTip(
             "Payload image downlink window.\n"
             "Displays images captured by the CubeSat camera.\n"
             "Updates when new image packets are received."
         )
-        self.image_label.setSizePolicy(
-            QtWidgets.QSizePolicy.Expanding,
-            QtWidgets.QSizePolicy.Expanding,
+        self._canvas_stack = self._canvas.stack
+
+        self.image_label = QtWidgets.QLabel()
+        self.image_label.setScaledContents(False)
+        self.image_label.setAlignment(QtCore.Qt.AlignCenter)
+        self.image_label.setStyleSheet("background: transparent; border: none;")
+
+        self._payload_marks = _PayloadMarks()
+        self._canvas_stack.addWidget(self.image_label)    # shown once a picture lands
+        self._canvas_stack.addWidget(self._payload_marks)  # shown while empty
+        self._canvas_stack.setCurrentWidget(self._payload_marks)
+
+        # Clear button: top-right, only while a picture is actually on
+        # screen — there is nothing to clear otherwise. A plain child of
+        # the canvas, not the column like the progress bar, because this
+        # sits fully inside the canvas's own rect (no straddling an edge,
+        # so no clipping to work around).
+        self._clear_image_btn = QtWidgets.QPushButton(self._canvas)
+        self._clear_image_btn.setObjectName("ghostBtn")
+        self._clear_image_btn.setIcon(theme.icon("cross", theme.SLATE, 14))
+        self._clear_image_btn.setIconSize(QtCore.QSize(14, 14))
+        self._clear_image_btn.setFixedSize(30, 30)
+        self._clear_image_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._clear_image_btn.setToolTip("Clear the displayed image")
+        self._clear_image_btn.clicked.connect(lambda: self.set_payload_empty(True))
+        self._clear_image_btn.hide()
+        theme.hover_lift(self._clear_image_btn)
+
+        # Pixie: sits in the canvas's other corner while idle, fading out
+        # and back in with the marks — same empty-state cast, different
+        # spot so it doesn't crowd the clear button above it.
+        self._pixie = _FadingImage(
+            os.path.join(BASE_PATH, "images", "pixie.png"), 76, self._canvas)
+        self._pixie.setToolTip("Pixie")
+
+        self._canvas.resized.connect(self._position_canvas_overlays)
+        self._position_canvas_overlays()
+
+        cl.addWidget(self._canvas, 5)
+        # Just enough clearance for the progress bar to straddle the
+        # canvas's bottom border.
+        cl.addSpacing(14)
+
+        # The transfer progress bar floats on that border instead of sitting
+        # in a row of its own — parented to the column, not the canvas, so
+        # the half that overlaps outside the canvas's rect actually paints
+        # (a widget can't render past its own parent's edge in Qt).
+        self.progress = QtWidgets.QProgressBar(centre)
+        self.progress.setObjectName("downlinkBar")
+        # Qt's own bar text goes blank for an indeterminate range (0, 0) —
+        # the header-wait phase — no matter what setFormat() says. A plain
+        # label on top, which we drive ourselves, shows the caption in both
+        # phases alike.
+        self.progress.setTextVisible(False)
+        self.progress.setMaximum(100)
+        self.progress.setValue(0)
+        self.progress.hide()
+        self.progress_caption = QtWidgets.QLabel(centre)
+        self.progress_caption.setAlignment(QtCore.Qt.AlignCenter)
+        self.progress_caption.setStyleSheet(
+            f"background: transparent; border: none; color: {theme.CREAM};"
+            f" font-family: '{theme.MONO}'; font-size: {theme.FS_MICRO}px;"
         )
-        cl.addWidget(self.image_label, 5)
-        cl.addSpacing(10)
+        self.progress_caption.hide()
+        self._canvas.resized.connect(self._position_progress_bar)
 
-        # Mini graphs. Four across needs about 700px to stay readable; below
-        # that the grid reflows to 2x2 rather than crushing them.
-        self.alt_graph  = MiniGraph("Altitude",         "m")
-        self.temp_graph = MiniGraph("Temperature",      "°C")
-        self.batt_graph = MiniGraph("Battery Voltage",  "V")
-        self.iaq_graph  = MiniGraph("AQI Index",        "")
+        # Under the payload frame: the map and the event log. GPS stays on
+        # the telemetry panel where it belongs; this is its old spot, now
+        # held by the card that actually reads as a location at a glance.
+        # No titles above them — headless cards reading as plain panels,
+        # given more height since there's nothing else competing for it.
         self.graph_popups: list[GraphPopup] = []
-        self._graphs = (self.alt_graph, self.temp_graph,
-                        self.batt_graph, self.iaq_graph)
-        for g in self._graphs:
-            g.clicked.connect(self._open_graph_popup)
-            g.setMinimumWidth(168)
+        strip = QtWidgets.QHBoxLayout()
+        strip.setSpacing(theme.GAP)
+        map_card = self.right.detach_map_card()
+        flag_card = self.telemetry.detach_flag_card()
+        strip.addWidget(map_card, 1)
+        strip.addWidget(flag_card, 1)
+        cl.addLayout(strip, 2)
 
-        self.graph_grid = QtWidgets.QGridLayout()
-        self.graph_grid.setSpacing(theme.GAP)
-        self._graph_columns = 0
-        self._layout_graphs(4)
-        cl.addLayout(self.graph_grid, 2)
-
-        # ── Right panel ───────────────────────────────────────────────────────
-        self.right = RightPanel()
-        self.right.command_signal.connect(self._send_command)
-        self.right.setMinimumWidth(380)
-        self.right.setMaximumWidth(480)
         body.addWidget(self.right, 0)
-
-    def _layout_graphs(self, columns: int):
-        """Re-flow the mini graphs into `columns` columns."""
-        if columns == self._graph_columns:
-            return
-        self._graph_columns = columns
-        for g in self._graphs:
-            self.graph_grid.removeWidget(g)
-        for i, g in enumerate(self._graphs):
-            self.graph_grid.addWidget(g, i // columns, i % columns)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if hasattr(self, "graph_grid"):
-            centre_width = self.width() - self.telemetry.width() - self.right.width()
-            self._layout_graphs(4 if centre_width >= 700 else 2)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Mission log helpers
@@ -410,6 +428,10 @@ class GroundStation(QtWidgets.QMainWindow):
         self._wb.save(self.temp_path)
 
         self._mission_saved      = False
+        # Every sensor channel's history, kept whether or not RTG is open.
+        self._channels: dict[str, list[tuple[str, float]]] = {}
+        self.rtg_window = None
+
         self._telemetry_row_count = 0
         self._flag_row_count      = 0
         self._link_row_count      = 0
@@ -639,16 +661,26 @@ class GroundStation(QtWidgets.QMainWindow):
             self.right.imu_labels["Roll"].setText(f"{roll:.2f} °")
             self.right.imu_labels["Yaw"].setText(f"{yaw:.2f} °")
 
-            self.alt_graph.add_value(float(parts[15]), parts[3])
-            self.temp_graph.add_value(float(parts[17]), parts[3])
-            self.batt_graph.add_value(float(parts[6]),  parts[3])
-
             gas_res = float(parts[23])
-            iaq, _,  _ = TelemetryPanel.calculate_air_quality(gas_res)
-            self.iaq_graph.add_value(iaq, parts[3])
-
-            gas_val = self.right.gas_labels["Gas Resistance"]
-            gas_val.setText(f"{parts[23]} {gas_val.unit}")
+            iaq, eco2, voc = TelemetryPanel.calculate_air_quality(gas_res)
+            self._record_channels({
+                "batt_v":   float(parts[6]),
+                "batt_soc": float(parts[7]),
+                "solar_v":  float(parts[8]),
+                "current":  float(parts[9]),
+                "power":    float(parts[10]),
+                "altitude": float(parts[15]),
+                "speed":    float(parts[16]),
+                "azimuth":  float(parts[4]),
+                "elevation": float(parts[5]),
+                "temp":     float(parts[17]),
+                "pressure": float(parts[18]),
+                "humidity": float(parts[19]),
+                "aqi":      float(iaq),
+                "eco2":     float(eco2),
+                "voc":      float(voc),
+                "gas_res":  gas_res,
+            }, parts[3])
 
             self.right.load_map(parts[12], parts[13])
 
@@ -722,8 +754,27 @@ class GroundStation(QtWidgets.QMainWindow):
         # gave no way to tell waiting from hung.
         self.progress.setRange(0, 0)          # indeterminate
         self.progress_caption.setText("Waiting for file header…")
-        self.progress_row.show()
-        self.cancel_btn.setEnabled(True)
+        self._position_progress_bar()
+        self.progress.show()
+        self.progress_caption.show()
+        self.progress.raise_()
+        self.progress_caption.raise_()
+        # The branding fades out the moment the operator presses Transmit
+        # Image, not only once a picture actually lands — a transfer can
+        # take over two minutes, and the canvas reads as busy/declutterd
+        # for the whole wait rather than keeping the idle marks up as if
+        # nothing were happening. It comes back in _show_image_result() if
+        # the transfer ends without ever producing a picture.
+        self.image_label.clear()
+        self._payload_marks.fade(
+            False, on_finished=lambda: self._canvas_stack.setCurrentWidget(self.image_label))
+        self._pixie.fade(False)
+        # Transmit Image becomes Cancel for the duration of the transfer —
+        # the same button the operator just pressed, rather than a separate
+        # control next to the progress bar.
+        self.right.set_button_override(
+            "tx_image", text="Cancel Transmit Image", icon_name="cross",
+            danger=True, slot=self._cancel_downlink)
         self.serial_port.reset_input_buffer()
         threading.Thread(target=self._receive_image_chunked, daemon=True).start()
 
@@ -738,7 +789,7 @@ class GroundStation(QtWidgets.QMainWindow):
         """
         if not self.receiving_image:
             return
-        self.cancel_btn.setEnabled(False)
+        self.right.command_buttons["tx_image"].setEnabled(False)
         self.progress_caption.setText("Cancelling…")
         self._downlink_cancelled = True
         self.receiving_image = False
@@ -993,12 +1044,24 @@ class GroundStation(QtWidgets.QMainWindow):
                 QtCore.Qt.QueuedConnection,
                 QtCore.Q_ARG(QtGui.QPixmap, pm),
             )
+            # A picture has arrived, so the branding gets out of its way.
+            QtCore.QTimer.singleShot(0, lambda: self.set_payload_empty(False))
         except Exception as e:
             print("Display render error:", e)
 
     def _show_image_result(self, success: bool, received: int, expected: int):
-        self.progress_row.hide()
+        self.progress.hide()
+        self.progress_caption.hide()
+        # Back to Transmit Image now that the transfer is over, whatever
+        # the outcome — success, partial, failed or cancelled.
+        self.right.set_button_override("tx_image")
         elapsed = time.time() - (self.image_start_time or time.time())
+
+        if not success or received == 0:
+            # No picture came out of this transfer — cancelled, timed out,
+            # or nothing arrived — so there is nothing for the canvas to
+            # show. Bring the branding back rather than leaving it blank.
+            self.set_payload_empty(True)
 
         if getattr(self, "_downlink_cancelled", False):
             self.show_toast("Downlink cancelled", kind="warn")
@@ -1167,6 +1230,91 @@ class GroundStation(QtWidgets.QMainWindow):
         if popup in self.graph_popups:
             self.graph_popups.remove(popup)
 
+    # ── payload frame ─────────────────────────────────────────────────────────
+    def set_payload_empty(self, empty: bool):
+        """Swap the canvas between the picture and the idle brand marks,
+        fading the marks (and Pixie) out before the swap and back in after
+        it, rather than the stack just cutting between pages. Also what the
+        clear button calls — "empty" is exactly the state it puts the
+        canvas back into."""
+        if empty:
+            self.image_label.clear()
+            self._canvas_stack.setCurrentWidget(self._payload_marks)
+            self._payload_marks.fade(True)
+            self._pixie.fade(True)
+            self._clear_image_btn.hide()
+        else:
+            self._payload_marks.fade(
+                False,
+                on_finished=lambda: self._canvas_stack.setCurrentWidget(self.image_label))
+            self._pixie.fade(False)
+            self._clear_image_btn.show()
+            self._clear_image_btn.raise_()
+
+    def _position_progress_bar(self):
+        """Keep the downlink bar pinned to the canvas's bottom border.
+
+        The bar is parented to the centre column, not the canvas (Qt would
+        clip it to the canvas's rect otherwise), so it needs the canvas's
+        geometry — already in the column's own coordinate space, since both
+        are direct children of it — rather than its own.
+        """
+        geo = self._canvas.geometry()
+        h = self.progress.sizeHint().height() or 26
+        bar_rect = QtCore.QRect(
+            geo.x(), geo.y() + geo.height() - h // 2, geo.width(), h)
+        self.progress.setGeometry(bar_rect)
+        self.progress_caption.setGeometry(bar_rect)
+        self.progress.raise_()
+        self.progress_caption.raise_()
+
+    def _position_canvas_overlays(self):
+        """Pin the clear button and Pixie to the canvas's own corners —
+        both are its children, so this is just the canvas's local rect,
+        no coordinate conversion needed."""
+        margin = 10
+        w, h = self._canvas.width(), self._canvas.height()
+        self._clear_image_btn.move(
+            w - self._clear_image_btn.width() - margin, margin)
+        self._pixie.move(
+            w - self._pixie.width() - margin, h - self._pixie.height() - margin)
+
+    # ── channels / RTG ────────────────────────────────────────────────────────
+    def _record_channels(self, values: dict, timestamp: str):
+        """Keep every channel's history whether or not RTG is open.
+
+        Recording only while the window exists would mean opening RTG mid-
+        mission showed four empty-looking graphs and threw away everything
+        before that point.
+        """
+        cap = settings.get("graphs/popup_points")
+        for key, value in values.items():
+            series = self._channels.setdefault(key, [])
+            series.append((timestamp, value))
+            if len(series) > cap:
+                del series[:-cap]
+        if self.rtg_window is not None:
+            self.rtg_window.add_values(values, timestamp)
+
+    def open_rtg(self):
+        # Maximized, not showFullScreen(): fullscreen takes over the whole
+        # display — no window chrome, no taskbar entry, nothing to alt-tab
+        # to — which read as RTG replacing the main window rather than
+        # opening as its own screen alongside it.
+        if self.rtg_window is None:
+            self.rtg_window = RTGWindow(self)
+            self.rtg_window.seed(self._channels)
+            self.rtg_window.destroyed.connect(self._forget_rtg)
+            self.rtg_window.setAttribute(QtCore.Qt.WA_DeleteOnClose)
+            self.rtg_window.showMaximized()
+        else:
+            self.rtg_window.showMaximized()
+            self.rtg_window.raise_()
+            self.rtg_window.activateWindow()
+
+    def _forget_rtg(self, *_):
+        self.rtg_window = None
+
     # ── settings ──────────────────────────────────────────────────────────────
     def _apply_display_settings(self):
         """Start, stop or re-rate the background animation."""
@@ -1177,14 +1325,18 @@ class GroundStation(QtWidgets.QMainWindow):
             self.update()
 
     def _apply_graph_settings(self):
-        """Resize the sample windows on the live graphs and any open popup."""
+        """Resize the sample windows on the RTG tiles and any open popup."""
         mini = settings.get("graphs/mini_points")
         popup = settings.get("graphs/popup_points")
-        for g in self._graphs:
-            g.max_points = mini
-            if len(g.data) > mini:
-                del g.data[:-mini]
-            g.update()
+        for series in self._channels.values():
+            if len(series) > popup:
+                del series[:-popup]
+        if self.rtg_window is not None:
+            for tile in self.rtg_window.tiles.values():
+                tile.max_points = mini
+                if len(tile.data) > mini:
+                    del tile.data[:-mini]
+                tile.update()
         for p in self.graph_popups:
             p.graph.max_points = popup
 
@@ -1308,6 +1460,226 @@ _TEXT    = theme.CREAM
 _MUTED   = theme.SLATE
 _RED     = theme.ALARM
 _GREEN   = theme.OK
+
+
+class _Canvas(QtWidgets.QFrame):
+    """The payload image frame: just the two-page stack (picture / idle
+    marks).
+
+    The downlink progress bar is NOT a child of this frame — Qt clips a
+    child's painting to its parent's rectangle, so a bar meant to straddle
+    this frame's own bottom border would have the straddling half silently
+    cut off. GroundStation parents the bar one level up instead, on the
+    column that holds both this canvas and the strip below it, and listens
+    to `resized` to keep it pinned to the border.
+    """
+
+    resized = QtCore.pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet(
+            f"background-color:{theme.DEEP}; border:1px solid {theme.LINE};"
+            f" border-radius:{theme.R_CARD}px;"
+        )
+        self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
+                           QtWidgets.QSizePolicy.Expanding)
+
+        self.stack = QtWidgets.QStackedLayout(self)
+        self.stack.setContentsMargins(0, 0, 0, 0)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.resized.emit()
+
+
+class _FadingImage(QtWidgets.QLabel):
+    """A static image with its own fade(shown) — Pixie, sitting in the
+    payload canvas's corner, fading out in step with the marks when a
+    downlink starts and back in when the canvas empties.
+
+    A plain sibling of _PayloadMarks rather than living inside it: Qt does
+    not composite a child widget's own opacity effect correctly once an
+    ancestor carries one too (see _PayloadMarks's own comment on this) —
+    keeping this at the same level, not nested under something else with
+    an effect, is what keeps it simple.
+    """
+
+    def __init__(self, image_path: str, max_side: int, parent=None):
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent; border: none;")
+        src = QtGui.QPixmap(image_path)
+        if not src.isNull():
+            self.setPixmap(src.scaled(
+                max_side, max_side,
+                QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+            self.setFixedSize(self.pixmap().size())
+        else:
+            self.setFixedSize(0, 0)
+
+        self._fx = QtWidgets.QGraphicsOpacityEffect(self)
+        self._fx.setOpacity(1.0)
+        self.setGraphicsEffect(self._fx)
+        self._fade = QtCore.QPropertyAnimation(self._fx, b"opacity", self)
+        self._fade.setDuration(280)
+        self._fade.setEasingCurve(QtCore.QEasingCurve.InOutCubic)
+
+    def fade(self, shown: bool, on_finished=None):
+        try:
+            self._fade.finished.disconnect()
+        except TypeError:
+            pass   # nothing was connected
+        if on_finished is not None:
+            self._fade.finished.connect(on_finished)
+        self._fade.stop()
+        self._fade.setStartValue(self._fx.opacity())
+        self._fade.setEndValue(1.0 if shown else 0.0)
+        self._fade.start()
+
+
+class _PayloadMarks(QtWidgets.QWidget):
+    """The three brand marks and the idle caption, shown while the payload
+    canvas is empty.
+
+    These used to sit in a header above the canvas that collapsed out of the
+    way when a picture arrived. That cost the canvas its full height even
+    once empty again — and put the marks outside the frame they were meant
+    to announce. Living inside the canvas, as one of its two stacked pages,
+    they take exactly the space the picture would, disappear the instant a
+    downlink starts, and reappear the instant the frame goes empty again.
+    They sit near the top of the canvas rather than centred in it, so the
+    lower half stays clear for the progress bar overlapping the border.
+    """
+
+    MAX_MARK = 220
+    TOP_PAD = 40
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        col = QtWidgets.QVBoxLayout(self)
+        # No left/right margin here: the row below supplies its own edge
+        # gaps as stretches, the same as the gaps between the three marks.
+        # A fixed margin here on top of those stretches made the edges read
+        # wider than the gaps between the logos — "even" only by accident.
+        col.setContentsMargins(0, self.TOP_PAD, 0, 24)
+        col.setSpacing(18)
+
+        # Translucent at rest, like a watermark sitting behind content
+        # rather than competing with it. The alpha is baked straight into
+        # each pixmap (see _faded()) rather than a QGraphicsOpacityEffect on
+        # this row: Qt does not composite a child widget's own opacity
+        # effect correctly once an ancestor (this whole widget, for the
+        # fade in/out below) carries one too — nested effects render as a
+        # blank widget, not a doubly-faded one.
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(0)
+        self._apex = QtWidgets.QLabel()
+        self._gcs = QtWidgets.QLabel()
+        self._cube = QtWidgets.QLabel()
+        for lbl in (self._apex, self._gcs, self._cube):
+            lbl.setAlignment(QtCore.Qt.AlignCenter)
+            lbl.setStyleSheet("background: transparent; border: none;")
+        row.addStretch(1)
+        row.addWidget(self._apex, 0, QtCore.Qt.AlignVCenter)
+        row.addStretch(1)
+        row.addWidget(self._gcs, 0, QtCore.Qt.AlignVCenter)
+        row.addStretch(1)
+        row.addWidget(self._cube, 0, QtCore.Qt.AlignVCenter)
+        row.addStretch(1)
+        col.addLayout(row, 0)
+
+        # The old empty-state line, back under the marks instead of being
+        # the only thing in the frame.
+        self._caption = QtWidgets.QLabel(
+            f"<div align='center' style='color:{theme.SLATE}'>"
+            f"<span style='font-size:{theme.FS_HEAD}px; font-weight:600;'>"
+            "No payload image yet</span><br><br>"
+            f"<span style='font-size:{theme.FS_BODY}px;'>Press "
+            f"<span style='color:{theme.TEAL}'>Transmit Image</span> to downlink "
+            "the latest capture</span></div>"
+        )
+        self._caption.setAlignment(QtCore.Qt.AlignCenter)
+        self._caption.setStyleSheet("background: transparent; border: none;")
+        col.addWidget(self._caption, 0)
+        col.addStretch(1)
+
+        self._apex_src = QtGui.QPixmap(
+            os.path.join(BASE_PATH, "images", "Apex Logo.png"))
+        self._gcs_src = QtGui.QPixmap(
+            os.path.join(BASE_PATH, "images", "GCS_img.png"))
+        # The supplied cut-out, matted off its white background so it does
+        # not sit in a white square on a black frame.
+        self._cube_src = QtGui.QPixmap(
+            os.path.join(BASE_PATH, "images", "cubesat_nobg.png"))
+
+        # Fades the whole widget out when a downlink starts and back in
+        # once the canvas is empty again — instead of the stack just
+        # snapping between pages, which this sits in front of (see
+        # GroundStation.set_payload_empty).
+        self._fx = QtWidgets.QGraphicsOpacityEffect(self)
+        self._fx.setOpacity(1.0)
+        self.setGraphicsEffect(self._fx)
+        self._fade = QtCore.QPropertyAnimation(self._fx, b"opacity", self)
+        self._fade.setDuration(280)
+        self._fade.setEasingCurve(QtCore.QEasingCurve.InOutCubic)
+
+        self._rescale()
+
+    def fade(self, shown: bool, on_finished=None):
+        """Animate to fully shown or fully hidden. `on_finished` fires once,
+        after the animation completes — GroundStation uses it to only swap
+        the canvas's stacked page once this has actually faded out, rather
+        than cutting to the picture mid-fade."""
+        try:
+            self._fade.finished.disconnect()
+        except TypeError:
+            pass   # nothing was connected
+        if on_finished is not None:
+            self._fade.finished.connect(on_finished)
+        self._fade.stop()
+        self._fade.setStartValue(self._fx.opacity())
+        self._fade.setEndValue(1.0 if shown else 0.0)
+        self._fade.start()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._rescale()
+
+    MARK_OPACITY = 0.5
+
+    @staticmethod
+    def _faded(pix: QtGui.QPixmap, opacity: float) -> QtGui.QPixmap:
+        """Bake `opacity` into the pixmap's own alpha, painted via a plain
+        QPainter rather than a QGraphicsEffect — see the comment above
+        where this is used for why."""
+        if pix.isNull():
+            return pix
+        img = QtGui.QImage(pix.size(), QtGui.QImage.Format_ARGB32_Premultiplied)
+        img.fill(QtCore.Qt.transparent)
+        p = QtGui.QPainter(img)
+        p.setOpacity(opacity)
+        p.drawPixmap(0, 0, pix)
+        p.end()
+        result = QtGui.QPixmap.fromImage(img)
+        result.setDevicePixelRatio(pix.devicePixelRatio())
+        return result
+
+    def _rescale(self):
+        """Size the three marks to the canvas, floored and capped so they
+        read at both a cramped and a wide window."""
+        side = max(min(self.height() - 48, self.MAX_MARK), 40)
+
+        for label, source in ((self._apex, self._apex_src),
+                              (self._cube, self._cube_src)):
+            if not source.isNull():
+                scaled = source.scaled(
+                    side, side,
+                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+                label.setPixmap(self._faded(scaled, self.MARK_OPACITY))
+        if not self._gcs_src.isNull():
+            scaled = self._gcs_src.scaledToHeight(
+                int(side * 0.9), QtCore.Qt.SmoothTransformation)
+            self._gcs.setPixmap(self._faded(scaled, self.MARK_OPACITY))
 
 
 class _ReconnectDialog(QtWidgets.QDialog):

@@ -12,6 +12,7 @@ QSettings, so there is no file to ship or clean up.
 
 from __future__ import annotations
 
+import json
 import os
 
 from PyQt5 import QtCore
@@ -82,3 +83,23 @@ def frame_ms() -> int:
     env = os.environ.get("APEX_BG_FPS", "")
     fps = float(env) if env else get("display/fps")
     return max(16, int(1000 / max(fps, 1)))
+
+
+# ── RTG canvas layout ─────────────────────────────────────────────────────────
+# A list of {"key", "col", "row", "col_span", "row_span"} dicts — which
+# channels the operator put on the RTG canvas, where, and at what size. This
+# is structured data, not a scalar, so it doesn't fit the typed _DEFAULTS
+# table above; it gets its own JSON-encoded key in the same QSettings store.
+def get_rtg_layout() -> list[dict]:
+    raw = _store().value("rtg/layout", "")
+    if not raw:
+        return []
+    try:
+        layout = json.loads(raw)
+        return layout if isinstance(layout, list) else []
+    except (TypeError, ValueError):
+        return []
+
+
+def set_rtg_layout(layout: list[dict]) -> None:
+    _store().setValue("rtg/layout", json.dumps(layout))

@@ -58,12 +58,18 @@ class MiniGraph(QtWidgets.QWidget):
     INSET_X = 12        # keeps the trace clear of the rounded corners
     FOOT_H  = 16        # min/max strip under the plot
 
-    def __init__(self, title: str, unit: str = "", max_points: int = MINI_GRAPH_MAX_POINTS):
+    def __init__(self, title: str, unit: str = "", max_points: int = MINI_GRAPH_MAX_POINTS,
+                 accent: str = None):
         super().__init__()
         self.setMinimumHeight(160)
         self.title = title
         self.unit  = unit
         self.max_points = max_points
+        # The trace, fill, hover outline and dot all key off this one colour.
+        # Every graph defaulted to the same teal regardless of what it was
+        # plotting; RTG hands each section its own so sixteen tiles don't
+        # read as one undifferentiated wall.
+        self.accent = accent or theme.TEAL
         self.data: list[tuple[str, float]] = []   # [(timestamp, value), ...]
 
         self._f_label = _font(theme.MONO, theme.FS_LABEL,
@@ -116,17 +122,34 @@ class MiniGraph(QtWidgets.QWidget):
         path = QtGui.QPainterPath()
         path.addRoundedRect(rect, theme.R_CARD, theme.R_CARD)
         p.fillPath(path, QtGui.QColor(theme.RAISED))
-        pen = QtGui.QPen(QtGui.QColor(theme.TEAL if self._hover else theme.LINE))
+        # The border always carries this tile's own accent now, not just on
+        # hover — a wall of identically neutral-grey-bordered cards gave the
+        # colour coding nothing to land on until the cursor was already over
+        # one of them.
+        border = QtGui.QColor(self.accent)
+        if not self._hover:
+            border.setAlpha(110)
+        pen = QtGui.QPen(border)
         pen.setWidthF(1.0)
         p.strokePath(path, pen)
         return rect
 
+    def _header_left_inset(self) -> float:
+        """Room to leave clear before the title text starts.
+
+        Zero for a plain MiniGraph. A subclass that draws something of its
+        own into the header's left edge (RTG's remove dot) overrides this
+        so the title doesn't start underneath it.
+        """
+        return 0.0
+
     def _paint_header(self, p: QtGui.QPainter, rect: QtCore.QRectF,
                       head_h: float) -> None:
         """Title on the left, the live reading on the right."""
+        left = rect.left() + self.INSET_X + self._header_left_inset()
         p.setFont(self._f_label)
         p.setPen(QtGui.QColor(theme.SLATE))
-        p.drawText(QtCore.QRectF(rect.left() + self.INSET_X, rect.top(),
+        p.drawText(QtCore.QRectF(left, rect.top(),
                                  rect.width(), head_h),
                    QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft,
                    self.title.upper())
@@ -178,14 +201,15 @@ class MiniGraph(QtWidgets.QWidget):
         area.lineTo(pts[0].x(),  plot.bottom())
         area.closeSubpath()
 
+        accent = QtGui.QColor(self.accent)
         grad = QtGui.QLinearGradient(0, plot.top(), 0, plot.bottom())
-        grad.setColorAt(0.0, QtGui.QColor(45, 212, 191, 56))
-        grad.setColorAt(1.0, QtGui.QColor(45, 212, 191, 0))
+        grad.setColorAt(0.0, QtGui.QColor(accent.red(), accent.green(), accent.blue(), 56))
+        grad.setColorAt(1.0, QtGui.QColor(accent.red(), accent.green(), accent.blue(), 0))
 
         p.save()
         p.setClipRect(plot)
         p.fillPath(area, QtGui.QBrush(grad))
-        pen = QtGui.QPen(QtGui.QColor(theme.TEAL))
+        pen = QtGui.QPen(accent)
         pen.setWidthF(1.8)
         pen.setJoinStyle(QtCore.Qt.RoundJoin)
         pen.setCapStyle(QtCore.Qt.RoundCap)
@@ -195,7 +219,7 @@ class MiniGraph(QtWidgets.QWidget):
 
         if dot:
             p.setPen(QtCore.Qt.NoPen)
-            p.setBrush(QtGui.QColor(theme.TEAL))
+            p.setBrush(accent)
             p.drawEllipse(pts[-1], 3.0, 3.0)
             p.setBrush(QtCore.Qt.NoBrush)
 
@@ -215,6 +239,30 @@ class MiniGraph(QtWidgets.QWidget):
         p.setFont(self._f_micro)
         p.setPen(QtGui.QColor(theme.DIM))
         p.drawText(plot, QtCore.Qt.AlignCenter, "awaiting telemetry")
+
+    def _footer_insets(self) -> tuple[float, float]:
+        """Room to leave clear at the left/right ends of the footer row.
+
+        Zero for a plain MiniGraph, whose corners have nothing else in
+        them. A subclass that draws its own controls into the card's
+        corners (RTG's remove/resize handles) overrides this so the footer
+        text doesn't grow straight into them — aligned text has no natural
+        margin the way a short right-aligned value does.
+        """
+        return 0.0, 0.0
+
+    def _paint_footer(self, p: QtGui.QPainter, plot: QtCore.QRectF,
+                      values: list[float]) -> None:
+        """The span the trace covers, and the window of time it took."""
+        left_pad, right_pad = self._footer_insets()
+        p.setFont(self._f_micro)
+        p.setPen(QtGui.QColor(theme.DIM))
+        foot = QtCore.QRectF(plot.left() + left_pad, plot.bottom() + 4,
+                             plot.width() - left_pad - right_pad, self.FOOT_H)
+        p.drawText(foot, QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft,
+                   f"{self.data[0][0]} → {self.data[-1][0]}")
+        p.drawText(foot, QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight,
+                   f"{_fmt(min(values))} / {_fmt(max(values))}")
 
     # ── painting ──────────────────────────────────────────────────────────────
     def paintEvent(self, event):
@@ -250,16 +298,7 @@ class MiniGraph(QtWidgets.QWidget):
             min_val, max_val = min_val - pad, max_val + pad
 
         self._paint_trace(p, plot, min_val, max_val)
-
-        # Footer: the span the trace covers, and the window of time it took.
-        p.setFont(self._f_micro)
-        p.setPen(QtGui.QColor(theme.DIM))
-        foot = QtCore.QRectF(plot.left(), plot.bottom() + 4,
-                             plot.width(), self.FOOT_H)
-        p.drawText(foot, QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft,
-                   f"{self.data[0][0]} → {self.data[-1][0]}")
-        p.drawText(foot, QtCore.Qt.AlignVCenter | QtCore.Qt.AlignRight,
-                   f"{_fmt(min(values))} / {_fmt(max(values))}")
+        self._paint_footer(p, plot, values)
         p.end()
 
 
@@ -280,8 +319,9 @@ class PopupGraph(MiniGraph):
     LM, RM, BM = 64, 24, 52     # left / right / bottom margins
     SNAP_PX    = 36             # how close the cursor must be to grab a point
 
-    def __init__(self, title: str, unit: str = "", max_points: int = POPUP_GRAPH_MAX_POINTS):
-        super().__init__(title, unit, max_points)
+    def __init__(self, title: str, unit: str = "", max_points: int = POPUP_GRAPH_MAX_POINTS,
+                 accent: str = None):
+        super().__init__(title, unit, max_points, accent)
         self.setMouseTracking(True)
         self.frozen_min  = None
         self.frozen_max  = None
@@ -510,7 +550,8 @@ class GraphPopup(QtWidgets.QMainWindow):
         """)
 
         self.source_graph = source_graph
-        self.graph = PopupGraph(source_graph.title, source_graph.unit)
+        self.graph = PopupGraph(source_graph.title, source_graph.unit,
+                                accent=getattr(source_graph, "accent", None))
         self.setCentralWidget(self.graph)
         self.setContentsMargins(theme.GAP, theme.GAP, theme.GAP, 0)
 
