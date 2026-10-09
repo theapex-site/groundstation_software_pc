@@ -33,6 +33,7 @@ from PIL import Image, ImageFile
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 
+import settings
 import theme
 from config import (
     BAUD_RATE, SERIAL_TIMEOUT, SERIAL_POLL_MS,
@@ -41,7 +42,8 @@ from config import (
 from widgets.telemetry_panel import TelemetryPanel
 from widgets.right_panel      import RightPanel
 from widgets.graphs           import MiniGraph, GraphPopup
-from widgets.dialogs          import Toast, ThemedMessageBox, UserProfileDialog
+from widgets.dialogs          import (Toast, ThemedMessageBox, UserProfileDialog,
+                                     SettingsDialog)
 
 if getattr(sys, 'frozen', False):
     BASE_PATH = sys._MEIPASS
@@ -80,12 +82,14 @@ class GroundStation(QtWidgets.QMainWindow):
         # ── Background ────────────────────────────────────────────────────────
         # The website's animated space scene, drawn in paintEvent. Was
         # images/BG1.jpg, a stock space photo that did not match the site.
-        from widgets.space_bg import SpaceScene, FRAME_MS, STATIC
+        from widgets.space_bg import SpaceScene
         self._scene = SpaceScene()
-        if not STATIC:
-            self._bg_timer = QtCore.QTimer(self)
-            self._bg_timer.timeout.connect(self._tick_background)
-            self._bg_timer.start(FRAME_MS)
+        # Rate and on/off come from Settings now rather than only from the
+        # APEX_STATIC_BG / APEX_BG_FPS environment variables, which a customer
+        # was never going to discover. The env vars still override.
+        self._bg_timer = QtCore.QTimer(self)
+        self._bg_timer.timeout.connect(self._tick_background)
+        self._apply_display_settings()
 
         # ── Mission log (Excel) ───────────────────────────────────────────────
         self._init_mission_log()
@@ -201,17 +205,47 @@ class GroundStation(QtWidgets.QMainWindow):
                   self.clock_label, self.packets_label, self.rate_label):
             row.addWidget(w, 0, QtCore.Qt.AlignBottom)
 
-        profile_btn = QtWidgets.QPushButton()
-        profile_btn.setIcon(theme.icon("gear", theme.SLATE, 17))
-        profile_btn.setIconSize(QtCore.QSize(17, 17))
-        profile_btn.setObjectName("settingsBtn")
+        # A gear means preferences everywhere else, and here it opened the
+        # user's profile. The profile is now the user's initials; the gear
+        # opens actual settings.
+        settings_btn = QtWidgets.QPushButton()
+        settings_btn.setIcon(theme.icon("gear", theme.SLATE, 17))
+        settings_btn.setIconSize(QtCore.QSize(17, 17))
+        settings_btn.setObjectName("settingsBtn")
+        settings_btn.setFixedSize(34, 34)
+        settings_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        settings_btn.setToolTip("Settings")
+        settings_btn.setShortcut(QtGui.QKeySequence("Ctrl+,"))
+        settings_btn.setAccessibleName("Settings")
+        settings_btn.clicked.connect(self.open_settings)
+        row.addWidget(settings_btn)
+
+        initials = self._user_initials()
+        profile_btn = QtWidgets.QPushButton(initials if initials else "")
+        if not initials:
+            # Signed out, or launched by the demo harness: a generic figure
+            # reads better than a question mark in a disc.
+            profile_btn.setIcon(theme.icon("user", theme.DEEP, 16))
+            profile_btn.setIconSize(QtCore.QSize(16, 16))
+        profile_btn.setObjectName("avatarBtn")
         profile_btn.setFixedSize(34, 34)
         profile_btn.setCursor(QtCore.Qt.PointingHandCursor)
-        profile_btn.setToolTip("User profile and settings")
+        profile_btn.setToolTip(self.user_email or "User profile")
+        profile_btn.setAccessibleName("User profile")
         profile_btn.clicked.connect(self._open_user_profile)
         row.addWidget(profile_btn)
 
         return bar
+
+    def _user_initials(self) -> str:
+        """Up to two letters from the signed-in address, for the avatar."""
+        local = (self.user_email or "").split("@")[0]
+        parts = [p for p in local.replace("_", ".").split(".") if p]
+        if not parts:
+            return ""
+        if len(parts) == 1:
+            return parts[0][:2].upper()
+        return (parts[0][0] + parts[1][0]).upper()
 
     def _build_ui(self):
         central = QtWidgets.QWidget()
@@ -447,7 +481,7 @@ class GroundStation(QtWidgets.QMainWindow):
     def _open_serial(self):
         try:
             self.serial_port = serial.Serial(
-                port=self.com_port, baudrate=BAUD_RATE, timeout=SERIAL_TIMEOUT
+                port=self.com_port, baudrate=settings.baud(), timeout=SERIAL_TIMEOUT
             )
             self.serial_port.dtr = False
             self.serial_port.rts = False
@@ -504,6 +538,10 @@ class GroundStation(QtWidgets.QMainWindow):
 
         self.reconnect_dialog = _ReconnectDialog(self)
         self.reconnect_dialog.show()
+        # Shown without these it can open behind the main window, leaving the
+        # operator watching telemetry stop with no visible explanation.
+        self.reconnect_dialog.raise_()
+        self.reconnect_dialog.activateWindow()
 
     def _do_serial_reconnect(self):
         """
@@ -517,7 +555,7 @@ class GroundStation(QtWidgets.QMainWindow):
             pass
         time.sleep(0.1)
         self.serial_port = serial.Serial(
-            port=self.com_port, baudrate=BAUD_RATE, timeout=SERIAL_TIMEOUT
+            port=self.com_port, baudrate=settings.baud(), timeout=SERIAL_TIMEOUT
         )
         self.serial_port.dtr = False
         self.serial_port.rts = False
@@ -529,6 +567,10 @@ class GroundStation(QtWidgets.QMainWindow):
             self.serial_timer.start(SERIAL_POLL_MS)
             self.reconnect_timer.stop()
             self.com_label.setText(f"COM: {self.com_port}")
+            # The toast fires regardless of the dialog. Reporting recovery
+            # only while the dialog happened to be visible meant anyone who
+            # dismissed it was never told the link came back.
+            self.show_toast("Serial link restored", "success")
             if hasattr(self, "reconnect_dialog") and self.reconnect_dialog.isVisible():
                 self.reconnect_dialog.set_reconnected()
         except Exception:
@@ -1125,6 +1167,34 @@ class GroundStation(QtWidgets.QMainWindow):
         if popup in self.graph_popups:
             self.graph_popups.remove(popup)
 
+    # ── settings ──────────────────────────────────────────────────────────────
+    def _apply_display_settings(self):
+        """Start, stop or re-rate the background animation."""
+        self._bg_timer.stop()
+        if settings.animate():
+            self._bg_timer.start(settings.frame_ms())
+        else:
+            self.update()
+
+    def _apply_graph_settings(self):
+        """Resize the sample windows on the live graphs and any open popup."""
+        mini = settings.get("graphs/mini_points")
+        popup = settings.get("graphs/popup_points")
+        for g in self._graphs:
+            g.max_points = mini
+            if len(g.data) > mini:
+                del g.data[:-mini]
+            g.update()
+        for p in self.graph_popups:
+            p.graph.max_points = popup
+
+    def open_settings(self):
+        dlg = SettingsDialog(self)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            self._apply_display_settings()
+            self._apply_graph_settings()
+            self.show_toast("Settings saved", "success")
+
     # Object names the application stylesheet gives a solid background to.
     _OPAQUE_NAMES = frozenset({"TelemetryPanel", "RightPanel", "appBar",
                                "groupBox"})
@@ -1184,11 +1254,12 @@ class GroundStation(QtWidgets.QMainWindow):
         self._scene.draw(painter, self.width(), self.height())
 
     def closeEvent(self, event):
-            has_data = (
-                self._telemetry_row_count > 0
-                or self._flag_row_count > 0
-                or self._link_row_count > 0
-            )
+            # Telemetry rows only. A link row is written on every @@ packet,
+            # so counting those meant the save prompt appeared after about a
+            # second of runtime every single time, with nothing worth saving;
+            # a prompt that always fires is one the operator learns to dismiss
+            # without reading.
+            has_data = self._telemetry_row_count > 0
             if has_data and not self._mission_saved:
                 event.ignore()
                 reply = ThemedMessageBox.question(

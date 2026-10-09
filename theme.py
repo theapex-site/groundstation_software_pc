@@ -519,6 +519,17 @@ QToolTip {{
     color: {SLATE};
 }}
 
+/* Caption over a group of commands, so a flat stack of buttons reads as
+   Payload / Comms / System rather than eight identical rows. */
+#groupCaption {{
+    font-family: "{MONO}";
+    font-size: {FS_MICRO}px;
+    font-weight: 600;
+    letter-spacing: {TRACK_LABEL};
+    color: {DIM};
+    padding: 8px 2px 2px 2px;
+}}
+
 /* Session chips in the application bar: port, signal, clock, packets.
    Same tab shape as the group titles — rounded along the top, open at the
    bottom — so they sit on the bar's bottom border rather than floating in
@@ -631,6 +642,26 @@ QPushButton#settingsBtn {{
     padding: 0px;
     text-align: center;
 }}
+
+/* The profile, as the operator's initials in a teal disc. A gear here meant
+   preferences to everyone and opened a profile instead. */
+QPushButton#avatarBtn {{
+    background: {TEAL};
+    color: {DEEP};
+    border: 1px solid {TEAL};
+    border-radius: 17px;
+    font-family: "{BODY}";
+    font-size: {FS_BODY}px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    padding: 0px;
+    text-align: center;
+}}
+QPushButton#avatarBtn:hover {{
+    background: {RAISED};
+    color: {TEAL};
+}}
+QPushButton#avatarBtn:focus {{ border: 2px solid {CREAM}; }}
 QPushButton#settingsBtn:hover {{
     background: {TEAL};
     color: {DEEP};

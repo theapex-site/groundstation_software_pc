@@ -4,6 +4,7 @@ widgets/telemetry_panel.py
 TelemetryPanel – left-side panel that displays all incoming sensor values,
 flag monitor, and colour-coded health indicators.
 """
+import html
 import math
 from datetime import datetime
 from PyQt5 import QtWidgets, QtCore
@@ -15,9 +16,14 @@ from config import DEGREE
 class TelemetryPanel(QtWidgets.QFrame):
     """Scrollable left panel showing live CubeSat telemetry."""
 
+    FLAG_MAX_LINES = 500
+
     def __init__(self):
         super().__init__()
         self.setObjectName("TelemetryPanel")
+        # (timestamp, line) kept behind the view so the filter is reversible
+        # and Copy All returns everything, not just what is on screen.
+        self._flag_lines: list[tuple[str, str]] = []
         layout = QtWidgets.QVBoxLayout(self)
 
         # ── Heading row (title + settings icon) ──────────────────────────────
@@ -183,22 +189,71 @@ class TelemetryPanel(QtWidgets.QFrame):
         flag_layout.setContentsMargins(12, flag_group.tab_height() + 6, 12, 10)
         flag_group.setLayout(flag_layout)
 
+        # Filter + copy row. This is the operator's only event history, so it
+        # needs to be searchable and extractable, not just scrollable.
+        tools_row = QtWidgets.QHBoxLayout()
+        tools_row.setSpacing(8)
+        self.flag_filter = QtWidgets.QLineEdit()
+        self.flag_filter.setPlaceholderText("Filter events…")
+        self.flag_filter.setClearButtonEnabled(True)
+        # ClickFocus, or the scroll area scrolls down to this on launch to
+        # show whatever just took keyboard focus.
+        self.flag_filter.setFocusPolicy(QtCore.Qt.ClickFocus)
+        self.flag_filter.textChanged.connect(self._apply_flag_filter)
+        copy_btn = QtWidgets.QPushButton("Copy All")
+        copy_btn.setObjectName("ghostBtn")
+        copy_btn.setToolTip("Copy the whole event log to the clipboard.")
+        copy_btn.setToolTipDuration(theme.TIP_MS)
+        copy_btn.clicked.connect(self._copy_flags)
+        tools_row.addWidget(self.flag_filter, 1)
+        tools_row.addWidget(copy_btn, 0)
+        flag_layout.addLayout(tools_row)
+
         self.flag_monitor = QtWidgets.QTextEdit()
         self.flag_monitor.setReadOnly(True)
+        # Unbounded growth over a long mission; QTextEdit enforces the cap.
+        self.flag_monitor.document().setMaximumBlockCount(self.FLAG_MAX_LINES)
         self.flag_monitor.setToolTip(
-            "Displays mission flags and system alerts.\n"
-            "Shows CubeSat events, warnings, and commands.\n"
-            "Used for monitoring mission status in real time."
+            "Mission flags and system alerts.\n"
+            "Teal is a ground command, cream a CubeSat event, red a failure.\n"
+            f"Keeps the most recent {self.FLAG_MAX_LINES} lines."
         )
         self.flag_monitor.setToolTipDuration(theme.TIP_MS)
         flag_layout.addWidget(self.flag_monitor)
         content_lay.addWidget(flag_group, 1)
 
-    # ── public helpers ────────────────────────────────────────────────────────
+    # ── flag monitor ──────────────────────────────────────────────────────────
+    _FAIL_WORDS = ("error", "fail", "timeout", "abort", "lost", "invalid")
+
+    def _flag_colour(self, line: str) -> str:
+        """Severity first, then origin.
+
+        Everything used to be appended in the same terminal green, which is
+        also the app's semantic "good" colour — so a timeout read as a
+        success.
+        """
+        if any(w in line.lower() for w in self._FAIL_WORDS):
+            return theme.ALARM
+        if line.startswith("GCS_"):
+            return theme.TEAL
+        return theme.CREAM
+
     def update_flag(self, line: str):
         if line.startswith("CS_") or line.startswith("GCS_"):
             t = datetime.now().strftime("%H:%M:%S")
-            self.flag_monitor.append(f"[{t}] {line}")
+            self._flag_lines.append((t, line))
+            if len(self._flag_lines) > self.FLAG_MAX_LINES:
+                del self._flag_lines[:-self.FLAG_MAX_LINES]
+
+            # Only follow the tail if the operator is already at the bottom;
+            # otherwise appending yanks the view away while they are reading.
+            bar = self.flag_monitor.verticalScrollBar()
+            at_bottom = bar.value() >= bar.maximum() - 4
+
+            if self._flag_visible(line):
+                self.flag_monitor.append(self._flag_html(t, line))
+            if at_bottom:
+                bar.setValue(bar.maximum())
 
             # Bubble up to GroundStation to also write to Excel
             parent = self.parent()
@@ -206,6 +261,26 @@ class TelemetryPanel(QtWidgets.QFrame):
                 parent = parent.parent()
             if parent:
                 parent._append_flag_row(t, line)
+
+    def _flag_html(self, t: str, line: str) -> str:
+        colour = self._flag_colour(line)
+        return (f'<span style="color:{theme.DIM}">[{t}]</span> '
+                f'<span style="color:{colour}">{html.escape(line)}</span>')
+
+    def _flag_visible(self, line: str) -> bool:
+        needle = self.flag_filter.text().strip().lower()
+        return not needle or needle in line.lower()
+
+    def _apply_flag_filter(self):
+        """Rebuild the view from the kept lines, so filtering is reversible."""
+        self.flag_monitor.clear()
+        for t, line in self._flag_lines:
+            if self._flag_visible(line):
+                self.flag_monitor.append(self._flag_html(t, line))
+
+    def _copy_flags(self):
+        text = "\n".join(f"[{t}] {line}" for t, line in self._flag_lines)
+        QtWidgets.QApplication.clipboard().setText(text)
 
     @staticmethod
     def calculate_air_quality(gas_res: float) -> tuple[int, int, int]:

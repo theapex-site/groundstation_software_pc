@@ -610,7 +610,11 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
         # Right: report panel
         right_frame = QtWidgets.QFrame()
-        right_frame.setFixedWidth(360)
+        # setFixedWidth here made the splitter handle a dead affordance:
+        # it rendered and accepted drags, but the pane could never move.
+        # A minimum plus a stretch factor lets it resize and still keeps
+        # the report readable.
+        right_frame.setMinimumWidth(300)
         right_frame.setStyleSheet(f"background:{self._PANEL}; border:1px solid {self._BORDER}; border-radius:{theme.R_CTRL}px;")
         right_layout = QtWidgets.QVBoxLayout(right_frame)
         right_layout.setContentsMargins(10, 8, 10, 8)
@@ -647,6 +651,8 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         right_layout.addWidget(self._log, 1)
 
         splitter.addWidget(right_frame)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
         splitter.setSizes([680, 360])
         root.addWidget(splitter, 1)
 

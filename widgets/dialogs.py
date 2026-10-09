@@ -17,7 +17,8 @@ import serial.tools.list_ports
 import tempfile, os
 from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
-from config import APEX_LOGO, title
+from config import APEX_LOGO, title, APP_VERSION
+import settings
 import theme
 import widgets.auth_backend as auth
 import widgets.firebase_backend as fb
@@ -1725,6 +1726,24 @@ class ThemedMessageBox(QtWidgets.QDialog):
 # ══════════════════════════════════════════════════════════════════════════════
 #  UserProfileDialog   <- opened by the gear button in the application bar
 # ══════════════════════════════════════════════════════════════════════════════
+class _SortItem(QtWidgets.QTableWidgetItem):
+    """A cell that sorts on a key rather than on its displayed text.
+
+    The table sorted lexically, so "9.4 KB" came after "10.1 KB" and a date
+    sorted by its rendering. The key is the real value; the text stays
+    human-readable.
+    """
+
+    def __init__(self, text: str, key):
+        super().__init__(text)
+        self._key = key
+
+    def __lt__(self, other):
+        if isinstance(other, _SortItem):
+            return self._key < other._key
+        return super().__lt__(other)
+
+
 class _MyBackupsDialog(QtWidgets.QDialog):
     """
     What is actually in the customer's Firebase Storage backup.
@@ -1781,6 +1800,8 @@ class _MyBackupsDialog(QtWidgets.QDialog):
         self._table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectRows)
         self._table.setEditTriggers(QtWidgets.QAbstractItemView.NoEditTriggers)
         self._table.horizontalHeader().setStretchLastSection(True)
+        self._table.setSortingEnabled(True)
+        self._table.horizontalHeader().setSortIndicator(4, QtCore.Qt.DescendingOrder)
         self._table.setColumnWidth(0, 30)
         self._table.setColumnWidth(1, 280)
         self._table.setColumnWidth(2, 130)
@@ -1834,11 +1855,19 @@ class _MyBackupsDialog(QtWidgets.QDialog):
                 item.setCheckState(QtCore.Qt.Checked if checked else QtCore.Qt.Unchecked)
 
     def _checked_rows(self) -> list:
+        """Indexes into self._files, not visual rows.
+
+        The table sorts now, so a visual row no longer corresponds to a
+        position in self._files — reading self._files[visual_row] would
+        download and delete the wrong files. Each checkbox carries its own
+        file index in Qt.UserRole.
+        """
         rows = []
         for r in range(self._table.rowCount()):
             item = self._table.item(r, 0)
             if item is not None and item.checkState() == QtCore.Qt.Checked:
-                rows.append(r)
+                idx = item.data(QtCore.Qt.UserRole)
+                rows.append(r if idx is None else int(idx))
         return rows
 
     def _on_item_changed(self, item):
@@ -1891,16 +1920,37 @@ class _MyBackupsDialog(QtWidgets.QDialog):
             self._table.itemChanged.disconnect(self._on_item_changed)
         except TypeError:
             pass
+        # Sorting during a fill reorders rows underneath the loop.
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(n)
         for r, f in enumerate(self._files):
             when = str(f.get("uploadedAt") or "")[:16].replace("T", " ")
             cb = QtWidgets.QTableWidgetItem()
             cb.setFlags(QtCore.Qt.ItemIsUserCheckable | QtCore.Qt.ItemIsEnabled)
             cb.setCheckState(QtCore.Qt.Checked)
+            cb.setData(QtCore.Qt.UserRole, r)   # survives re-sorting
             self._table.setItem(r, 0, cb)
-            for c, v in enumerate([f.get("name", ""), f.get("folder", ""),
-                                   fb.human_bytes(f.get("size")), when], start=1):
-                self._table.setItem(r, c, QtWidgets.QTableWidgetItem(str(v)))
+            size_raw = f.get("size") or 0
+            try:
+                size_raw = int(size_raw)
+            except (TypeError, ValueError):
+                size_raw = 0
+
+            name_item = _SortItem(str(f.get("name", "")),
+                                  str(f.get("name", "")).lower())
+            folder_item = _SortItem(str(f.get("folder", "")),
+                                    str(f.get("folder", "")).lower())
+            size_item = _SortItem(fb.human_bytes(f.get("size")), size_raw)
+            when_item = _SortItem(when, str(f.get("uploadedAt") or ""))
+
+            # Figures right-align so the magnitudes line up; text stays left.
+            size_item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+            when_item.setTextAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+
+            for c, item in enumerate((name_item, folder_item, size_item, when_item),
+                                     start=1):
+                self._table.setItem(r, c, item)
+        self._table.setSortingEnabled(True)
         self._table.itemChanged.connect(self._on_item_changed)
 
         self._all_cb.blockSignals(True)
@@ -2392,3 +2442,170 @@ class UserProfileDialog(QtWidgets.QDialog):
 
 # Need threading import at module level for the worker thread
 import threading
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SettingsDialog
+# ══════════════════════════════════════════════════════════════════════════════
+class SettingsDialog(QtWidgets.QDialog):
+    """
+    The application's actual preferences.
+
+    There were none: baud rate, the graph sample windows and the alarm bands
+    were hardcoded, and the background animation was reachable only through
+    the APEX_STATIC_BG and APEX_BG_FPS environment variables. The gear icon,
+    meanwhile, opened the user's profile — which is not what a gear means
+    anywhere else.
+
+    Only settings that actually take effect are here. Alarm thresholds and
+    unit conversion are deliberately absent: wiring those means reworking the
+    threshold table and the unit column, and a preferences screen full of
+    controls that change nothing is worse than one that is honest about its
+    scope.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Settings")
+        self.setModal(True)
+        self.setMinimumWidth(460)
+        self.setMaximumWidth(560)
+        self.setStyleSheet(_base_style() + f"""
+            QDialog {{
+                background: {_BG};
+                border: 1px solid {_BORDER};
+                border-radius: {theme.R_CARD}px;
+            }}
+        """)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(26, 22, 26, 20)
+        root.setSpacing(6)
+
+        hdr = QtWidgets.QHBoxLayout()
+        icon = QtWidgets.QLabel()
+        icon.setPixmap(theme.icon("gear", _ACCENT, 22).pixmap(22, 22))
+        hdr.addWidget(icon)
+        title = QtWidgets.QLabel("Settings")
+        title.setStyleSheet(
+            f"color:{_ACCENT}; font-family:'{theme.DISPLAY}';"
+            f" font-size:{theme.FS_HEAD}px; font-weight:600; margin-left:8px;")
+        hdr.addWidget(title)
+        hdr.addStretch()
+        root.addLayout(hdr)
+        root.addSpacing(8)
+
+        form = QtWidgets.QFormLayout()
+        form.setLabelAlignment(QtCore.Qt.AlignLeft)
+        form.setFormAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignTop)
+        form.setHorizontalSpacing(18)
+        form.setVerticalSpacing(10)
+
+        # ── Serial ───────────────────────────────────────────────────────────
+        form.addRow(self._caption("SERIAL"))
+        self._baud = QtWidgets.QComboBox()
+        for rate in settings.BAUD_CHOICES:
+            self._baud.addItem(f"{rate:,}", rate)
+        self._baud.setCurrentIndex(
+            max(0, settings.BAUD_CHOICES.index(settings.baud())
+                if settings.baud() in settings.BAUD_CHOICES else 4))
+        self._baud.setToolTip("Takes effect the next time the port is opened "
+                              "— use Reconnect Serial to apply it now.")
+        form.addRow(self._label("Baud rate"), self._baud)
+
+        # ── Display ──────────────────────────────────────────────────────────
+        form.addRow(self._caption("DISPLAY"))
+        self._animate = QtWidgets.QCheckBox("Animate the starfield")
+        self._animate.setChecked(settings.get("display/animate"))
+        form.addRow("", self._animate)
+
+        self._fps = QtWidgets.QSpinBox()
+        self._fps.setRange(10, 60)
+        self._fps.setSuffix(" fps")
+        self._fps.setValue(settings.get("display/fps"))
+        self._fps.setToolTip("Costs roughly 13% of one core at 30 fps.")
+        form.addRow(self._label("Animation rate"), self._fps)
+        self._animate.toggled.connect(self._fps.setEnabled)
+        self._fps.setEnabled(self._animate.isChecked())
+
+        # ── Graphs ───────────────────────────────────────────────────────────
+        form.addRow(self._caption("GRAPHS"))
+        self._mini = QtWidgets.QSpinBox()
+        self._mini.setRange(10, 500)
+        self._mini.setSuffix(" samples")
+        self._mini.setValue(settings.get("graphs/mini_points"))
+        form.addRow(self._label("Dashboard window"), self._mini)
+
+        self._popup = QtWidgets.QSpinBox()
+        self._popup.setRange(50, 5000)
+        self._popup.setSuffix(" samples")
+        self._popup.setValue(settings.get("graphs/popup_points"))
+        form.addRow(self._label("Expanded window"), self._popup)
+
+        root.addLayout(form)
+
+        # ── About ────────────────────────────────────────────────────────────
+        root.addSpacing(10)
+        root.addWidget(self._caption("ABOUT"))
+        ver = QtWidgets.QLabel(
+            f"APEX Ground Control Station v{APP_VERSION}")
+        ver.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        root.addWidget(ver)
+
+        about_row = QtWidgets.QHBoxLayout()
+        check_btn = _icon_btn("Check for updates", "download")
+        check_btn.clicked.connect(self._check_updates)
+        about_row.addWidget(check_btn)
+        about_row.addStretch()
+        root.addLayout(about_row)
+
+        # ── Buttons ──────────────────────────────────────────────────────────
+        root.addSpacing(14)
+        btn_row = QtWidgets.QHBoxLayout()
+        defaults_btn = QtWidgets.QPushButton("Restore defaults")
+        defaults_btn.setObjectName("ghostBtn")
+        defaults_btn.clicked.connect(self._restore_defaults)
+        cancel_btn = QtWidgets.QPushButton("Cancel")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn = QtWidgets.QPushButton("Save")
+        save_btn.setObjectName("primaryBtn")
+        save_btn.setDefault(True)
+        save_btn.clicked.connect(self._save)
+        btn_row.addWidget(defaults_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(cancel_btn)
+        btn_row.addWidget(save_btn)
+        root.addLayout(btn_row)
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+    @staticmethod
+    def _caption(text: str) -> QtWidgets.QLabel:
+        lbl = QtWidgets.QLabel(text)
+        lbl.setObjectName("groupCaption")
+        return lbl
+
+    @staticmethod
+    def _label(text: str) -> QtWidgets.QLabel:
+        lbl = QtWidgets.QLabel(text)
+        lbl.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        return lbl
+
+    def _restore_defaults(self):
+        settings.reset()
+        self._baud.setCurrentIndex(settings.BAUD_CHOICES.index(settings.baud()))
+        self._animate.setChecked(settings.get("display/animate"))
+        self._fps.setValue(settings.get("display/fps"))
+        self._mini.setValue(settings.get("graphs/mini_points"))
+        self._popup.setValue(settings.get("graphs/popup_points"))
+
+    def _check_updates(self):
+        import core.updater
+        core.updater.check_for_updates(self)
+
+    def _save(self):
+        settings.set_("serial/baud", self._baud.currentData())
+        settings.set_("display/animate", self._animate.isChecked())
+        settings.set_("display/fps", self._fps.value())
+        settings.set_("graphs/mini_points", self._mini.value())
+        settings.set_("graphs/popup_points", self._popup.value())
+        self.accept()
