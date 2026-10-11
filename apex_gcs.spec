@@ -37,6 +37,16 @@
 #                                silently doing nothing (now also reports
 #                                "already latest" / errors, not just a
 #                                found update).
+#   v1.2.3  c852c9a  2026-10-11  Self-updater no longer skips the
+#                                auto-relaunch when the silent installer
+#                                exits non-zero, and now logs the install
+#                                so a partial update is diagnosable
+#                                instead of silent; login window shows an
+#                                "Opening Ground Control Station..." page
+#                                while the main window builds instead of
+#                                collapsing with nothing shown; fixed a
+#                                QtWebEngineWidgets import-order crash
+#                                from building GroundStation lazily.
 # ─────────────────────────────────────────────────────────────────────────
 import os
 import sys
