@@ -13,11 +13,12 @@ All themed popup windows for the APEX GCS.
 import os
 import json
 import tempfile
+import threading
 import serial.tools.list_ports
 import tempfile, os
 from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
-from config import APEX_LOGO, title, APP_VERSION
+from config import APEX_LOGO,PIXIE_LOGO, title, APP_VERSION
 import settings
 import theme
 import widgets.auth_backend as auth
@@ -394,29 +395,51 @@ class _LoginPage(QtWidgets.QWidget):
     go_signup       = QtCore.pyqtSignal()
     # (email, live firebase session, why) -> the licence needs re-entering
     needs_reauth    = QtCore.pyqtSignal(str, object, str)
+    # The resume attempt (if there was one) didn't produce a session —
+    # offline, expired, or no saved token to begin with. LoginWindow uses
+    # this to come back off the splash page to this form.
+    resume_failed   = QtCore.pyqtSignal()
+    # Internal: the background resume thread's outcome, handed back across
+    # threads — Qt auto-queues a signal onto its receiver's thread, which is
+    # the whole point of routing the result through one instead of just
+    # acting on it from the worker thread directly.
+    _resume_done = QtCore.pyqtSignal(dict)
 
     def __init__(self, session: dict):
         """session dict is shared with LoginWindow for Stay-Signed-In."""
         super().__init__()
         self._session = session
         self._build()
+        self._resume_done.connect(self._on_resume_done)
         # Resume after the window has painted, so a slow network shows the
-        # login form rather than a frozen blank panel.
-        QtCore.QTimer.singleShot(0, self._try_resume)
+        # login form first rather than a blank panel.
+        QtCore.QTimer.singleShot(0, self._start_resume)
 
-    def _try_resume(self):
-        """
-        Sign back in from the saved refresh token, if there is one.
-
-        Also where this computer discovers it has been signed out: if the
-        licence's deviceId has moved to another machine, the saved session is
-        dropped and the user is told why. That is the whole of the
-        one-computer-at-a-time rule on this side — no polling, so nothing eats
-        into Firestore's free daily write quota.
-        """
+    def _start_resume(self):
         token = self._session.get("refreshToken")
         if not token:
             return
+        self._resume_label.show()
+        threading.Thread(target=self._resume_worker, daemon=True).start()
+
+    def _resume_worker(self):
+        """
+        Sign back in from the saved refresh token, if there is one.
+
+        Runs off the GUI thread: every fb.* call here is a blocking network
+        request to Firebase, and doing this directly on the GUI thread (as
+        it used to) froze the whole window for however long that took —
+        which a compositor or screen-share renders as solid white rather
+        than the last real frame, since a blocked event loop can't repaint
+        on request.
+
+        Also where this computer discovers it has been signed out: if the
+        licence's deviceId has moved to another machine, the saved session
+        is dropped and the user is told why. That is the whole of the
+        one-computer-at-a-time rule on this side — no polling, so nothing
+        eats into Firestore's free daily write quota.
+        """
+        token = self._session.get("refreshToken")
         try:
             session = fb.refresh_session({
                 "refreshToken": token,
@@ -425,6 +448,7 @@ class _LoginPage(QtWidgets.QWidget):
             })
             info = fb.account_info(session["idToken"])
             if not info.get("emailVerified"):
+                self._resume_done.emit({"kind": "none"})
                 return
             session["uid"] = info["uid"]
             session["email"] = info["email"]
@@ -432,6 +456,7 @@ class _LoginPage(QtWidgets.QWidget):
             profile = fb.fetch_profile(session)
             licence = (profile or {}).get("licenceKey", "")
             if not licence:
+                self._resume_done.emit({"kind": "none"})
                 return
 
             ok, msg = fb.device_still_ours(session, licence)
@@ -441,18 +466,38 @@ class _LoginPage(QtWidgets.QWidget):
                 # signed in on another computer is not, so that still drops
                 # the saved session and sends them back to the sign-in form.
                 if "another computer" in msg.lower():
-                    _clear_session()
-                    self._session.clear()
-                    ThemedMessageBox.information(self, "Signed Out", msg)
+                    self._resume_done.emit({"kind": "signed_out", "msg": msg})
                 else:
-                    self.needs_reauth.emit(session["email"], session, msg)
+                    self._resume_done.emit({
+                        "kind": "needs_reauth", "email": session["email"],
+                        "session": session, "msg": msg,
+                    })
                 return
 
             fb.check_entitlement(session, licence)
         except fb.AuthError:
+            self._resume_done.emit({"kind": "none"})
             return      # offline or expired — fall back to the normal form
         fb.set_current_session(session)
-        self.login_success.emit(session["email"])
+        self._resume_done.emit({"kind": "success", "email": session["email"]})
+
+    def _on_resume_done(self, result: dict):
+        """Back on the GUI thread — safe to touch widgets and self._session
+        here, unlike in _resume_worker()."""
+        self._resume_label.hide()
+        kind = result["kind"]
+        if kind == "none":
+            self.resume_failed.emit()
+            return
+        if kind == "signed_out":
+            _clear_session()
+            self._session.clear()
+            ThemedMessageBox.information(self, "Signed Out", result["msg"])
+            self.resume_failed.emit()
+        elif kind == "needs_reauth":
+            self.needs_reauth.emit(result["email"], result["session"], result["msg"])
+        elif kind == "success":
+            self.login_success.emit(result["email"])
 
     def _build(self):
         lay = QtWidgets.QVBoxLayout(self)
@@ -472,6 +517,15 @@ class _LoginPage(QtWidgets.QWidget):
         lay.addWidget(sub)
         lay.addSpacing(10)
 
+        # Shown while _try_resume's background thread is still talking to
+        # Firebase, so a saved sign-in taking a moment reads as "working",
+        # not as the form just sitting there (or, before this, the window
+        # itself going unresponsive — see _try_resume's own comment).
+        self._resume_label = QtWidgets.QLabel("Checking saved sign-in…")
+        self._resume_label.setStyleSheet(f"color:{_ACCENT}; font-size:11px;")
+        self._resume_label.hide()
+        lay.addWidget(self._resume_label)
+
         # Email
         self.email_inp = _labelled_input(lay, "Email", "your@email.com")
 
@@ -485,7 +539,7 @@ class _LoginPage(QtWidgets.QWidget):
             echo=QtWidgets.QLineEdit.Password)
 
         # No password pre-fill any more: nothing stores it. "Stay signed in"
-        # now resumes from the saved refresh token instead (see _try_resume).
+        # now resumes from the saved refresh token instead (see _resume_worker).
 
         # Show Password checkbox
         show_cb = QtWidgets.QCheckBox("Show Password")
@@ -1220,6 +1274,38 @@ class _ComPortPage(QtWidgets.QWidget):
         self.port_selected.emit(port)
 
 
+class _SplashPage(QtWidgets.QWidget):
+    """Shown in place of the sign-in form while a saved "stay signed in"
+    session is being resumed.
+
+    Someone who ticked that box already proved who they are last time —
+    making them stare at the same email/password form again for the second
+    or two the resume check takes (even off the GUI thread, Firebase still
+    takes a moment to answer) read as not actually remembering them. This
+    is what they see instead, until _resume_worker settles one way or the
+    other.
+    """
+
+    def __init__(self):
+        super().__init__()
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setAlignment(QtCore.Qt.AlignCenter)
+        lay.setSpacing(16)
+
+        logo = QtWidgets.QLabel()
+        logo.setAlignment(QtCore.Qt.AlignCenter)
+        pix = QtGui.QPixmap(PIXIE_LOGO)
+        if not pix.isNull():
+            logo.setPixmap(pix.scaled(
+                120, 120, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+        lay.addWidget(logo)
+
+        msg = QtWidgets.QLabel("Signing you in…")
+        msg.setAlignment(QtCore.Qt.AlignCenter)
+        msg.setStyleSheet(f"color:{_MUTED}; font-size:12px; letter-spacing:1px;")
+        lay.addWidget(msg)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  LoginWindow   ← called from main.py
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1346,16 +1432,28 @@ class LoginWindow(QtWidgets.QDialog):
         self._signup_page = _SignUpPage()
         self._com_page    = _ComPortPage()
         self._reauth_page = _ReauthPage(self._session)
+        self._splash_page = _SplashPage()
 
         self._stack.addWidget(self._login_page)    # index 0
         self._stack.addWidget(self._signup_page)   # index 1
         self._stack.addWidget(self._com_page)      # index 2
         self._stack.addWidget(self._reauth_page)   # index 3
+        self._stack.addWidget(self._splash_page)   # index 4
+
+        # A saved "stay signed in" session already proved who this is last
+        # time — showing the blank sign-in form while _resume_worker
+        # re-checks it (then snapping straight to the COM port page a
+        # moment later) read as the form flashing by half-built, not as
+        # "remembering" the operator. The splash page stands in for it
+        # until the resume attempt actually resolves, one way or another.
+        if self._session.get("refreshToken"):
+            self._stack.setCurrentIndex(4)
 
         # Wire signals
         self._login_page.login_success.connect(self._on_login_success)
         self._login_page.go_signup.connect(lambda: self._stack.setCurrentIndex(1))
         self._login_page.needs_reauth.connect(self._on_needs_reauth)
+        self._login_page.resume_failed.connect(lambda: self._stack.setCurrentIndex(0))
 
         self._reauth_page.reauth_success.connect(self._on_login_success)
         self._reauth_page.go_login.connect(lambda: self._stack.setCurrentIndex(0))
@@ -1367,7 +1465,7 @@ class LoginWindow(QtWidgets.QDialog):
 
         root_lay.addWidget(self._stack)
 
-        # Resuming a saved session is _LoginPage._try_resume's job: it only
+        # Resuming a saved session is _LoginPage._resume_worker's job: it only
         # emits login_success once the licence has actually been checked.
         # There used to be a second auto-login here that skipped straight past
         # that, which let a revoked licence through whenever "stay signed in"

@@ -65,6 +65,13 @@ class GroundStation(QtWidgets.QMainWindow):
     # Signals emitted from the background image-receive thread
     image_done_signal = QtCore.pyqtSignal(bool, int, int)
     progress_signal   = QtCore.pyqtSignal(int, str)
+    # _display_image() runs on that same background thread. A bare
+    # QTimer.singleShot there — which is what this replaced — silently
+    # never fires: the timer belongs to whatever thread creates it, and a
+    # thread with no Qt event loop of its own never comes back to fire it.
+    # A signal crossing threads auto-queues onto the receiver's thread,
+    # which is the whole reason the other two above exist.
+    payload_empty_signal = QtCore.pyqtSignal(bool)
 
     def __init__(self, com_port: str = None, user_email: str = ""):
         super().__init__()
@@ -106,6 +113,7 @@ class GroundStation(QtWidgets.QMainWindow):
 
         self.image_done_signal.connect(self._show_image_result)
         self.progress_signal.connect(self._update_progress)
+        self.payload_empty_signal.connect(self.set_payload_empty)
 
         # ── Session accounting ────────────────────────────────────────────────
         self._session_start    = time.monotonic()
@@ -335,16 +343,10 @@ class GroundStation(QtWidgets.QMainWindow):
         # the canvas, not the column like the progress bar, because this
         # sits fully inside the canvas's own rect (no straddling an edge,
         # so no clipping to work around).
-        self._clear_image_btn = QtWidgets.QPushButton(self._canvas)
-        self._clear_image_btn.setObjectName("ghostBtn")
-        self._clear_image_btn.setIcon(theme.icon("cross", theme.SLATE, 14))
-        self._clear_image_btn.setIconSize(QtCore.QSize(14, 14))
-        self._clear_image_btn.setFixedSize(30, 30)
-        self._clear_image_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._clear_image_btn = _ClearButton(self._canvas)
         self._clear_image_btn.setToolTip("Clear the displayed image")
         self._clear_image_btn.clicked.connect(lambda: self.set_payload_empty(True))
         self._clear_image_btn.hide()
-        theme.hover_lift(self._clear_image_btn)
 
         # Pixie: sits in the canvas's other corner while idle, fading out
         # and back in with the marks — same empty-state cast, different
@@ -766,8 +768,12 @@ class GroundStation(QtWidgets.QMainWindow):
         # nothing were happening. It comes back in _show_image_result() if
         # the transfer ends without ever producing a picture.
         self.image_label.clear()
-        self._payload_marks.fade(
-            False, on_finished=lambda: self._canvas_stack.setCurrentWidget(self.image_label))
+
+        def _reveal_blank_canvas():
+            self._canvas_stack.setCurrentWidget(self.image_label)
+            self._position_canvas_overlays()
+
+        self._payload_marks.fade(False, on_finished=_reveal_blank_canvas)
         self._pixie.fade(False)
         # Transmit Image becomes Cancel for the duration of the transfer —
         # the same button the operator just pressed, rather than a separate
@@ -1045,7 +1051,10 @@ class GroundStation(QtWidgets.QMainWindow):
                 QtCore.Q_ARG(QtGui.QPixmap, pm),
             )
             # A picture has arrived, so the branding gets out of its way.
-            QtCore.QTimer.singleShot(0, lambda: self.set_payload_empty(False))
+            # This runs on the background receive thread — emitting the
+            # signal, not calling set_payload_empty() directly, is what
+            # actually gets it onto the GUI thread where the widgets live.
+            self.payload_empty_signal.emit(False)
         except Exception as e:
             print("Display render error:", e)
 
@@ -1243,12 +1252,15 @@ class GroundStation(QtWidgets.QMainWindow):
             self._payload_marks.fade(True)
             self._pixie.fade(True)
             self._clear_image_btn.hide()
+            self._position_canvas_overlays()
         else:
-            self._payload_marks.fade(
-                False,
-                on_finished=lambda: self._canvas_stack.setCurrentWidget(self.image_label))
+            def _reveal_image():
+                self._canvas_stack.setCurrentWidget(self.image_label)
+                self._position_canvas_overlays()
+            self._payload_marks.fade(False, on_finished=_reveal_image)
             self._pixie.fade(False)
             self._clear_image_btn.show()
+            self._position_canvas_overlays()
             self._clear_image_btn.raise_()
 
     def _position_progress_bar(self):
@@ -1271,13 +1283,23 @@ class GroundStation(QtWidgets.QMainWindow):
     def _position_canvas_overlays(self):
         """Pin the clear button and Pixie to the canvas's own corners —
         both are its children, so this is just the canvas's local rect,
-        no coordinate conversion needed."""
+        no coordinate conversion needed.
+
+        Also re-raises both every time: the canvas's QStackedLayout raises
+        whichever page is current whenever it switches (same thing that
+        buried the RTG progress bar under a stack page once before), and
+        it switches pages well after set_payload_empty() first shows these
+        — asserting the raise here, instead of once at switch time, is
+        what actually survives that.
+        """
         margin = 10
         w, h = self._canvas.width(), self._canvas.height()
         self._clear_image_btn.move(
             w - self._clear_image_btn.width() - margin, margin)
         self._pixie.move(
             w - self._pixie.width() - margin, h - self._pixie.height() - margin)
+        self._clear_image_btn.raise_()
+        self._pixie.raise_()
 
     # ── channels / RTG ────────────────────────────────────────────────────────
     def _record_channels(self, values: dict, timestamp: str):
@@ -1491,6 +1513,59 @@ class _Canvas(QtWidgets.QFrame):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self.resized.emit()
+
+
+class _ClearButton(QtWidgets.QWidget):
+    """A small square "x" chip — paints itself rather than using
+    QPushButton's icon, because that icon-layout logic is built around an
+    icon sitting next to text and visibly mis-centres a lone icon on a
+    button this small. Drawing the cross from the widget's own centre
+    guarantees it actually lands there."""
+
+    clicked = QtCore.pyqtSignal()
+    SIZE = 30
+    ARM = 5.0   # half-length of each stroke of the ×
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setCursor(QtCore.Qt.PointingHandCursor)
+        self._hover = False
+
+    def enterEvent(self, event):
+        self._hover = True
+        self.update()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self._hover = False
+        self.update()
+        super().leaveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == QtCore.Qt.LeftButton and self.rect().contains(event.pos()):
+            self.clicked.emit()
+        super().mouseReleaseEvent(event)
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing)
+        rect = QtCore.QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(rect, theme.R_SM, theme.R_SM)
+        p.fillPath(path, QtGui.QColor(theme.ALARM_FILL if self._hover else "#0a0a10"))
+        pen = QtGui.QPen(QtGui.QColor(theme.ALARM))
+        pen.setWidthF(1.5)
+        p.strokePath(path, pen)
+
+        cx, cy, s = rect.center().x(), rect.center().y(), self.ARM
+        pen = QtGui.QPen(QtGui.QColor(theme.ALARM))
+        pen.setWidthF(1.6)
+        pen.setCapStyle(QtCore.Qt.RoundCap)
+        p.setPen(pen)
+        p.drawLine(QtCore.QPointF(cx - s, cy - s), QtCore.QPointF(cx + s, cy + s))
+        p.drawLine(QtCore.QPointF(cx + s, cy - s), QtCore.QPointF(cx - s, cy + s))
+        p.end()
 
 
 class _FadingImage(QtWidgets.QLabel):
