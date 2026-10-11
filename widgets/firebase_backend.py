@@ -366,6 +366,12 @@ def claim_licence(session: dict, key: str, first_time: bool) -> None:
 # window can use it without threading a session object through every widget.
 _CURRENT: dict = {}
 
+# The gcsUsers profile doc (name, institution, city, licenceKey, ...) for the
+# signed-in account — fetched once at login and reused until logout, rather
+# than hitting Firestore again every time something (the profile dialog, the
+# welcome message) wants to read it.
+_CURRENT_PROFILE: dict = {}
+
 
 def set_current_session(session: dict) -> None:
     _CURRENT.clear()
@@ -374,6 +380,15 @@ def set_current_session(session: dict) -> None:
 
 def current_session() -> dict | None:
     return dict(_CURRENT) if _CURRENT.get("idToken") else None
+
+
+def set_current_profile(profile: dict) -> None:
+    _CURRENT_PROFILE.clear()
+    _CURRENT_PROFILE.update(profile or {})
+
+
+def current_profile() -> dict | None:
+    return dict(_CURRENT_PROFILE) if _CURRENT_PROFILE else None
 
 
 def log_logout() -> None:

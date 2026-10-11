@@ -17,6 +17,7 @@ It also owns:
 import atexit
 import io
 import os
+import random
 import struct
 import sys
 import threading
@@ -43,8 +44,8 @@ from widgets.telemetry_panel import TelemetryPanel
 from widgets.right_panel      import RightPanel
 from widgets.graphs           import MiniGraph, GraphPopup
 from widgets.rtg              import RTGWindow
-from widgets.dialogs          import (Toast, ThemedMessageBox, UserProfileDialog,
-                                     SettingsDialog)
+from widgets.dialogs          import (Toast, PixieBubble, ThemedMessageBox,
+                                     UserProfileDialog, SettingsDialog)
 
 if getattr(sys, 'frozen', False):
     BASE_PATH = sys._MEIPASS
@@ -53,6 +54,35 @@ else:
 
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
+# Pixie's one-per-launch greeting, picked by time of day — "{name}" becomes
+# ", <first name>" when one is known, or nothing at all otherwise, so every
+# line still reads naturally either way.
+_WELCOME_MORNING = [
+    "Good morning{name}! Ready when you are.",
+    "Morning{name}. Link's warm, coffee's on you.",
+    "Rise and shine{name} — mission control's up.",
+]
+_WELCOME_AFTERNOON = [
+    "Good afternoon{name}! Systems nominal.",
+    "Afternoon{name}. Let's catch some signal.",
+    "Back at it{name} — all green here.",
+]
+_WELCOME_EVENING = [
+    "Good evening{name}! Everything's quiet and ready.",
+    "Evening shift{name}. I've got the board.",
+    "Welcome back{name} — link's holding steady.",
+]
+_WELCOME_NIGHT = [
+    "Burning the midnight oil{name}?",
+    "Still up{name}? So am I.",
+    "Late one{name} — I'll keep watch with you.",
+]
+_WELCOME_FLAVOR = [
+    "Houston, we have a Pixie{name}.",
+    "Mission control is online{name}.",
+    "All systems green{name}. Let's fly.",
+    "Standing by for your orders{name}.",
+]
 
 
 
@@ -122,6 +152,13 @@ class GroundStation(QtWidgets.QMainWindow):
         self._recent_packets   = []       # monotonic stamps, for the rate
         self._last_link_time   = None     # last '@@' link frame
 
+        # Commands sent since the last telemetry packet actually came back —
+        # a run of these with silence in between usually means the CubeSat
+        # itself is unpowered, not just a weak link, so it gets its own hint.
+        self._cmds_since_reply = 0
+        self.NO_REPLY_CMDS = 3
+        self._last_sats = None    # None until the first GPS reading lands
+
         # ── Build UI ──────────────────────────────────────────────────────────
         self._build_ui()
 
@@ -149,6 +186,12 @@ class GroundStation(QtWidgets.QMainWindow):
         # ── Check for updates ─────────────────────────────────────────────────
         from core.updater import check_for_updates
         check_for_updates(parent=self)
+
+        # ── Pixie's welcome message ───────────────────────────────────────────
+        # Delayed past __init__: the window isn't shown yet (main.py calls
+        # .show() right after this returns), and Pixie needs her own first
+        # paint before a bubble can anchor to her.
+        QtCore.QTimer.singleShot(1200, self._show_welcome_message)
 
     # ══════════════════════════════════════════════════════════════════════════
     #  UI construction
@@ -530,6 +573,8 @@ class GroundStation(QtWidgets.QMainWindow):
                         self._parse_packet(line)
                     elif line.startswith("CS_") or line.startswith("GCS_"):
                         self.telemetry.update_flag(line)
+                        if line == "CS_READY":
+                            self.show_toast("CubeSat is online!", "success")
                     elif line.startswith("@@"):
                         self._parse_link_packet(line)
         except serial.SerialException:
@@ -657,6 +702,14 @@ class GroundStation(QtWidgets.QMainWindow):
                 gas_res=parts[23],
             )
 
+            try:
+                sats = int(float(parts[11]))
+                if self._last_sats and sats == 0:
+                    self.show_toast("GPS fix lost", "warn")
+                self._last_sats = sats
+            except ValueError:
+                pass
+
             pitch, roll, yaw = float(parts[20]), float(parts[21]), float(parts[22])
             self.right.cubesat_3d.update_orientation(pitch, roll, yaw)
             self.right.imu_labels["Pitch"].setText(f"{pitch:.2f} °")
@@ -729,6 +782,15 @@ class GroundStation(QtWidgets.QMainWindow):
                 print("Command sent:", name)
                 self.telemetry.update_flag(f"GCS_CMD_{cmd.strip()}")
                 self.show_toast(f"Command {name} sent")
+
+                # Telemetry is expected to pause during an image downlink —
+                # silence there is normal, not a sign anything is wrong.
+                if not self.image_mode:
+                    self._cmds_since_reply += 1
+                    if self._cmds_since_reply == self.NO_REPLY_CMDS:
+                        self.show_toast(
+                            "No Heartbeat from CS — check CubeSat power", "warn")
+
                 if cmd.strip() == "S":
                     self._start_image_receiver()
         except Exception as e:
@@ -1093,11 +1155,7 @@ class GroundStation(QtWidgets.QMainWindow):
                     f"Image received · {received / 1024:.1f} KB · {elapsed:.0f}s",
                     kind="success")
         else:
-            ThemedMessageBox.warning(
-                self, "Image Transfer Failed",
-                "No image data was received.",
-                informative="Check the link quality and try the downlink again.",
-            )
+            self.show_toast("Image transfer failed — no data received", "error")
 
     def _update_progress(self, value: int, text: str):
         if self.progress.maximum() == 0 and self.total_packets:
@@ -1109,7 +1167,12 @@ class GroundStation(QtWidgets.QMainWindow):
     #  Link status
     # ══════════════════════════════════════════════════════════════════════════
     def update_link_status(self, connected: bool, snr=None, rssi=None):
+        was_connected = self.is_connected
         self.is_connected = connected
+        if was_connected and not connected:
+            # Only on the actual drop, not every frame that arrives while
+            # already disconnected — otherwise this would fire repeatedly.
+            self.show_toast("Signal lost — check your link", "error")
         if connected:
             self.blink_timer.stop()
             self.link_status.setText("● LINK STABLE")
@@ -1184,6 +1247,7 @@ class GroundStation(QtWidgets.QMainWindow):
         self._packet_count += 1
         self._last_packet_time = now
         self._recent_packets.append(now)
+        self._cmds_since_reply = 0
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Misc
@@ -1219,7 +1283,45 @@ class GroundStation(QtWidgets.QMainWindow):
         # Toast keeps its own stack per window, so no reference is held here.
         # Assigning to self.toast used to drop the previous one without
         # closing it, leaving two drawn exactly on top of each other.
-        Toast(self, text, kind)
+        # While Pixie is actually on screen, she says it herself instead —
+        # the same message, as a speech bubble over her corner of the
+        # canvas rather than a toast in the window's.
+        if self._pixie.is_visible():
+            PixieBubble(self._pixie, text, kind)
+        else:
+            Toast(self, text, kind)
+
+    def _welcome_name(self) -> str:
+        """First name for the greeting — the cached profile's real name if
+        there is one, else a best-effort guess from the login email, else
+        nothing (the templates all read fine with no name too)."""
+        profile = fb.current_profile()
+        name = (profile or {}).get("name", "")
+        if isinstance(name, str) and name.strip():
+            return name.strip().split()[0]
+
+        local = (self.user_email or "").split("@")[0]
+        cleaned = local.replace(".", " ").replace("_", " ").strip()
+        if cleaned and cleaned.replace(" ", "").isalpha():
+            return cleaned.split()[0].capitalize()
+        return ""
+
+    def _show_welcome_message(self):
+        hour = datetime.now().hour
+        if 5 <= hour < 12:
+            pool = _WELCOME_MORNING
+        elif 12 <= hour < 17:
+            pool = _WELCOME_AFTERNOON
+        elif 17 <= hour < 21:
+            pool = _WELCOME_EVENING
+        else:
+            pool = _WELCOME_NIGHT
+        if random.random() < 0.2:
+            pool = _WELCOME_FLAVOR
+
+        name = self._welcome_name()
+        name_part = f", {name}" if name else ""
+        self.show_toast(random.choice(pool).format(name=name_part), "info")
 
     def _open_graph_popup(self, graph_widget: MiniGraph):
         # One window per graph: double-clicking the same mini graph used to
@@ -1610,6 +1712,12 @@ class _FadingImage(QtWidgets.QLabel):
         self._fade.setStartValue(self._fx.opacity())
         self._fade.setEndValue(1.0 if shown else 0.0)
         self._fade.start()
+
+    def is_visible(self) -> bool:
+        """Whether Pixie is actually on screen right now, as opposed to
+        mid-fade-out during a downlink — the cue for whether a status
+        message should speak through her or fall back to a plain Toast."""
+        return self._fx.opacity() > 0.5
 
 
 class _PayloadMarks(QtWidgets.QWidget):

@@ -9,7 +9,7 @@ Colours, fonts, radii and the stylesheet live in theme.py.
 import os
 import sys
 
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 GITHUB_REPO = "theapex-site/groundstation_software_pc"
 
 def resource_path(relative_path):
@@ -25,6 +25,7 @@ IMAGES_DIR = resource_path("images")
 
 APEX_LOGO  = os.path.join(IMAGES_DIR, "Apex Logo.png")
 PIXIE_LOGO  = os.path.join(IMAGES_DIR, "pixie_thinking.png")
+PIXIE_BUBBLE = os.path.join(IMAGES_DIR, "pixie_bubble.png")
 # BG1.jpg is no longer used: widgets/space_bg.py generates the website's
 # starfield instead. The file is left in images/ for now rather than deleted.
 title      = os.path.join(IMAGES_DIR, "GCS_img.png")

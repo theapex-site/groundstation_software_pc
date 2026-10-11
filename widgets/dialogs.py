@@ -18,7 +18,7 @@ import serial.tools.list_ports
 import tempfile, os
 from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
-from config import APEX_LOGO,PIXIE_LOGO, title, APP_VERSION
+from config import APEX_LOGO,PIXIE_LOGO, PIXIE_BUBBLE, title, APP_VERSION
 import settings
 import theme
 import widgets.auth_backend as auth
@@ -331,6 +331,7 @@ class _ReauthPage(QtWidgets.QWidget):
         _clear_session()
         self._session.clear()
         fb.set_current_session({})
+        fb.set_current_profile({})
         self.go_login.emit()
 
     def _do_auth(self):
@@ -479,6 +480,7 @@ class _LoginPage(QtWidgets.QWidget):
             self._resume_done.emit({"kind": "none"})
             return      # offline or expired — fall back to the normal form
         fb.set_current_session(session)
+        fb.set_current_profile(profile)
         self._resume_done.emit({"kind": "success", "email": session["email"]})
 
     def _on_resume_done(self, result: dict):
@@ -659,6 +661,7 @@ class _LoginPage(QtWidgets.QWidget):
             _clear_session()
 
         fb.set_current_session(session)
+        fb.set_current_profile(profile)
         self.login_success.emit(email)
 
     def _do_forgot(self):
@@ -1662,6 +1665,166 @@ class Toast(QtWidgets.QFrame):
         super().closeEvent(event)
 
 
+class PixieBubble(QtWidgets.QFrame):
+    """A comic thought-cloud over Pixie's head — what command confirmations
+    and similar chatter become while she's actually on screen, instead of
+    the bottom-right Toast everything still falls back to the moment she's
+    faded out mid-downlink.
+
+    The art itself is the user's reference thought-bubble image, re-cut:
+    its black ink and white fill are isolated with a flood fill from the
+    image border (stopped at the ink), then recoloured — ink to the
+    message's edge colour, fill to the panel's own dark colour — rather
+    than redrawn as a shape of our own. See tools/make_pixie_bubble.py.
+    """
+
+    # Same semantic colours as Toast for an actual alert, but a plain
+    # white outline for an ordinary "info" message — the reference image
+    # inverted (white ink on the dark fill), not the app's teal accent.
+    _EDGE = dict(Toast._EDGE, info="#ffffff")
+    # Loaded lazily (first use), not at class-body eval time: this module
+    # is imported before QApplication exists (main.py builds LoginWindow's
+    # import before the app), and QPixmap needs one alive to load a file.
+    _PIX = None
+
+    # Where the art's lower trailer dot and its text-safe interior sit,
+    # as fractions of the asset's own width/height — measured once off
+    # the source image, not eyeballed per redraw.
+    _ANCHOR_FX, _ANCHOR_FY = 0.875, 0.981
+    _TEXT_FRAC = (0.15, 0.16, 0.85, 0.56)   # left, top, right, bottom
+
+    _DISPLAY_W = 240
+
+    # One live bubble per anchor, so a fast second message doesn't stack
+    # on top of the first — it replaces it instead.
+    _live: dict = {}
+
+    def __init__(self, anchor: QtWidgets.QWidget, text: str, kind: str = "info"):
+        host = anchor.window()
+        super().__init__(host)
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+
+        prev = PixieBubble._live.get(id(anchor))
+        if prev is not None:
+            prev.close()
+
+        self._anchor = anchor
+        edge = self._EDGE.get(kind, _ACCENT)
+
+        w = self._DISPLAY_W
+        h = round(w * self._base_pixmap().height() / self._base_pixmap().width())
+        self._pix = self._tinted(edge, w, h)
+        self.setFixedSize(w, h)
+
+        lf, tf, rf, bf = self._TEXT_FRAC
+        text_rect = QtCore.QRect(
+            round(lf * w), round(tf * h), round((rf - lf) * w), round((bf - tf) * h))
+
+        label = QtWidgets.QLabel(text, self)
+        label.setWordWrap(True)
+        label.setAlignment(QtCore.Qt.AlignCenter)
+        label.setStyleSheet(
+            f"color: {_TEXT}; font-size: {theme.FS_BODY}px; background: transparent;")
+        label.setGeometry(text_rect)
+
+        self._fx = QtWidgets.QGraphicsOpacityEffect(self)
+        self._fx.setOpacity(0.0)
+        self.setGraphicsEffect(self._fx)
+        self._fade = QtCore.QPropertyAnimation(self._fx, b"opacity", self)
+        self._fade.setEasingCurve(QtCore.QEasingCurve.InOutCubic)
+
+        PixieBubble._live[id(anchor)] = self
+        self._reposition()
+        self.raise_()
+        self.show()
+
+        self._fade.setDuration(220)
+        self._fade.setStartValue(0.0)
+        self._fade.setEndValue(1.0)
+        self._fade.start()
+        QtCore.QTimer.singleShot(2300, self._fade_out)
+
+    def _fade_out(self):
+        try:
+            self._fade.finished.disconnect()
+        except TypeError:
+            pass
+        self._fade.finished.connect(self.close)
+        self._fade.stop()
+        self._fade.setDuration(320)
+        self._fade.setStartValue(self._fx.opacity())
+        self._fade.setEndValue(0.0)
+        self._fade.start()
+
+    @classmethod
+    def _base_pixmap(cls) -> QtGui.QPixmap:
+        if cls._PIX is None:
+            cls._PIX = QtGui.QPixmap(PIXIE_BUBBLE)
+        return cls._PIX
+
+    @classmethod
+    def _tinted(cls, edge: str, w: int, h: int) -> QtGui.QPixmap:
+        """The art, scaled to display size and with its ink swapped to
+        this message's edge colour — both cached per (colour, size), and
+        scaled down before the per-pixel swap so the loop runs over a few
+        thousand pixels, not the full-resolution source."""
+        cache = cls.__dict__.get("_tint_cache")
+        if cache is None:
+            cache = {}
+            cls._tint_cache = cache
+        key = (edge, w, h)
+        hit = cache.get(key)
+        if hit is not None:
+            return hit
+
+        ratio = QtWidgets.QApplication.instance().devicePixelRatio() \
+            if QtWidgets.QApplication.instance() else 1.0
+        scaled = cls._base_pixmap().scaled(
+            int(w * ratio), int(h * ratio),
+            QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+
+        img = scaled.toImage().convertToFormat(QtGui.QImage.Format_ARGB32)
+        want = QtGui.QColor(_ACCENT)
+        swap = QtGui.QColor(edge)
+        if swap != want:
+            for y in range(img.height()):
+                for x in range(img.width()):
+                    px = img.pixelColor(x, y)
+                    if px.alpha() and abs(px.red() - want.red()) < 40 \
+                            and abs(px.green() - want.green()) < 40 \
+                            and abs(px.blue() - want.blue()) < 40:
+                        px.setRed(swap.red())
+                        px.setGreen(swap.green())
+                        px.setBlue(swap.blue())
+                        img.setPixelColor(x, y, px)
+        result = QtGui.QPixmap.fromImage(img)
+        result.setDevicePixelRatio(ratio)
+        cache[key] = result
+        return result
+
+    def _reposition(self):
+        host = self.parentWidget()
+        top_left = self._anchor.mapTo(host, QtCore.QPoint(0, 0))
+        acx = top_left.x() + self._anchor.width() / 2
+        ax = self._ANCHOR_FX * self.width()
+        ay = self._ANCHOR_FY * self.height()
+        x = max(8, min(acx - ax, host.width() - self.width() - 8))
+        y = max(8, top_left.y() - ay - 4)
+        self.move(int(x), int(y))
+
+    def paintEvent(self, event):
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.SmoothPixmapTransform, True)
+        p.drawPixmap(0, 0, self._pix)
+        p.end()
+
+    def closeEvent(self, event):
+        if PixieBubble._live.get(id(self._anchor)) is self:
+            del PixieBubble._live[id(self._anchor)]
+        self.deleteLater()
+        super().closeEvent(event)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  ThemedMessageBox
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2401,17 +2564,18 @@ class UserProfileDialog(QtWidgets.QDialog):
         self._quota_ready.connect(self._on_quota_loaded)
 
         def worker():
-            # One Firestore read, emitted immediately, so the card fills as
-            # soon as it possibly can.
-            #
-            # This used to wait on a Google Drive call first, which was six
-            # round-trips (build the service, find-or-create the folder, three
-            # subfolders, then a share call) before a single field appeared.
-            info = None
+            # The profile doc was already fetched once at login and cached
+            # (see fb.set_current_profile) — reused here rather than hitting
+            # Firestore again every time this dialog opens. Only a cache
+            # miss (dialog opened before login finished caching it, in
+            # theory) falls back to a live read.
+            info = fb.current_profile()
             session = fb.current_session()
-            if session:
+            if info is None and session:
                 try:
                     info = fb.fetch_profile(fb.ensure_fresh(session))
+                    if info is not None:
+                        fb.set_current_profile(info)
                 except fb.AuthError:
                     info = None
             self._profile_ready.emit(info, None)
