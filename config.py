@@ -26,6 +26,7 @@ IMAGES_DIR = resource_path("images")
 APEX_LOGO  = os.path.join(IMAGES_DIR, "Apex Logo.png")
 PIXIE_LOGO  = os.path.join(IMAGES_DIR, "pixie_thinking.png")
 PIXIE_BUBBLE = os.path.join(IMAGES_DIR, "pixie_bubble.png")
+DOWNLOAD_ANIMATION = os.path.join(IMAGES_DIR, "download_animation.gif")
 # BG1.jpg is no longer used: widgets/space_bg.py generates the website's
 # starfield instead. The file is left in images/ for now rather than deleted.
 title      = os.path.join(IMAGES_DIR, "GCS_img.png")

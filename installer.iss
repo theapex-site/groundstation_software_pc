@@ -32,4 +32,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Visual C++ Runtime..."; Flags: waituntilterminated
 Filename: "pnputil"; Parameters: "/add-driver ""{app}\drivers\cp210x\silabser.inf"" /install"; StatusMsg: "Installing CP210x USB driver..."; Flags: runhidden waituntilterminated
-Filename: "{app}\APEX_GCS.exe"; Description: "Launch APEX GCS"; Flags: nowait postinstall skipifsilent
+; No skipifsilent: the in-app updater runs this installer with /VERYSILENT,
+; and that silent run still needs to relaunch the app once it's done — a
+; manual double-click install still shows this as the usual Finish-page
+; "Launch APEX GCS" checkbox either way.
+Filename: "{app}\APEX_GCS.exe"; Description: "Launch APEX GCS"; Flags: nowait postinstall

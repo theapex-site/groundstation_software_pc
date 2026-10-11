@@ -45,7 +45,8 @@ from widgets.right_panel      import RightPanel
 from widgets.graphs           import MiniGraph, GraphPopup
 from widgets.rtg              import RTGWindow
 from widgets.dialogs          import (Toast, PixieBubble, ThemedMessageBox,
-                                     UserProfileDialog, SettingsDialog)
+                                     UserProfileDialog, SettingsDialog,
+                                     UpdateDownloadDialog)
 
 if getattr(sys, 'frozen', False):
     BASE_PATH = sys._MEIPASS
@@ -524,23 +525,38 @@ class GroundStation(QtWidgets.QMainWindow):
     # ══════════════════════════════════════════════════════════════════════════
     #  Auto-update
     # ══════════════════════════════════════════════════════════════════════════
-    @QtCore.pyqtSlot(str, str)
-    def _show_update_dialog(self, latest_version, download_url):
+    @QtCore.pyqtSlot(str, str, bool)
+    def _show_update_dialog(self, latest_version, download_url, is_installer):
         import webbrowser
         from config import APP_VERSION
-        msg = ThemedMessageBox(self)
-        msg.setWindowTitle("Update Available")
-        msg.setText(
-            f"A new version of APEX GCS is available!\n\n"
-            f"Current: v{APP_VERSION}\n"
-            f"Latest:  v{latest_version}\n\n"
-            f"Would you like to download it now?"
+        reply = ThemedMessageBox.question(
+            self, "Update Available",
+            "A new version of APEX GCS is available!",
+            informative=(f"Current: v{APP_VERSION}\n"
+                         f"Latest:  v{latest_version}\n\n"
+                         f"Would you like to download it now?"),
+            buttons=["Download", "Not Now"],
         )
-        msg.setStandardButtons(
-            QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No
-        )
-        if msg.exec_() == QtWidgets.QMessageBox.Yes:
+        if reply != "Download":
+            return
+        if is_installer:
+            dlg = UpdateDownloadDialog(self, download_url, latest_version)
+            dlg.exec_()
+        else:
+            # No .exe asset on the release — nothing to stream and install,
+            # so the release page is the best fallback.
             webbrowser.open(download_url)
+
+    def _prepare_for_restart(self):
+        """Called just before the updater hands off to the installer and
+        this process exits — release the serial port so the new copy can
+        open it immediately instead of finding it still held."""
+        try:
+            self.serial_timer.stop()
+            if hasattr(self, "serial_port") and self.serial_port and self.serial_port.is_open:
+                self.serial_port.close()
+        except Exception:
+            pass
 
     # ══════════════════════════════════════════════════════════════════════════
     #  Serial

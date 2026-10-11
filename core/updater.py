@@ -39,6 +39,10 @@ def _check(parent):
                 download_url = asset["browser_download_url"]
                 break
 
+        # A direct .exe asset can be streamed and installed in-app; without
+        # one, the release page is the best we can do, and that only makes
+        # sense opened in a browser.
+        is_installer = download_url is not None
         if not download_url:
             download_url = data.get("html_url", "")
 
@@ -47,6 +51,7 @@ def _check(parent):
             QtCore.Qt.QueuedConnection,
             QtCore.Q_ARG(str, latest),
             QtCore.Q_ARG(str, download_url),
+            QtCore.Q_ARG(bool, is_installer),
         )
     except Exception:
         pass

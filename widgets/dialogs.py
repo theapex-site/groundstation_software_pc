@@ -16,9 +16,11 @@ import tempfile
 import threading
 import serial.tools.list_ports
 import tempfile, os
+import requests
 from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
-from config import APEX_LOGO,PIXIE_LOGO, PIXIE_BUBBLE, title, APP_VERSION
+from config import (APEX_LOGO, PIXIE_LOGO, PIXIE_BUBBLE, DOWNLOAD_ANIMATION,
+                    title, APP_VERSION)
 import settings
 import theme
 import widgets.auth_backend as auth
@@ -1823,6 +1825,261 @@ class PixieBubble(QtWidgets.QFrame):
             del PixieBubble._live[id(self._anchor)]
         self.deleteLater()
         super().closeEvent(event)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  Self-update: download + silent install, in-app rather than a browser tab
+# ══════════════════════════════════════════════════════════════════════════════
+class _DownloadThread(QtCore.QThread):
+    """Streams the installer to a temp file, reporting progress as it goes.
+
+    A plain QThread rather than the check-for-updates pattern's bare
+    threading.Thread + QMetaObject.invokeMethod: this needs a steady stream
+    of progress ticks, not one callback at the end, so Qt signals are the
+    simpler fit.
+    """
+    progress = QtCore.pyqtSignal(int, int)   # bytes_done, bytes_total (0 if unknown)
+    finished_ok = QtCore.pyqtSignal(str)     # local file path
+    failed = QtCore.pyqtSignal(str)          # error message
+
+    def __init__(self, url: str, dest_path: str, parent=None):
+        super().__init__(parent)
+        self._url = url
+        self._dest = dest_path
+        self._cancelled = False
+
+    def cancel(self):
+        self._cancelled = True
+
+    def run(self):
+        try:
+            resp = requests.get(self._url, stream=True, timeout=30)
+            resp.raise_for_status()
+            total = int(resp.headers.get("Content-Length", 0))
+            done = 0
+            with open(self._dest, "wb") as fh:
+                for chunk in resp.iter_content(chunk_size=1 << 16):
+                    if self._cancelled:
+                        return
+                    if not chunk:
+                        continue
+                    fh.write(chunk)
+                    done += len(chunk)
+                    self.progress.emit(done, total)
+            if self._cancelled:
+                return
+            self.finished_ok.emit(self._dest)
+        except Exception as exc:
+            if not self._cancelled:
+                self.failed.emit(str(exc))
+
+
+class _RoundedMovieLabel(QtWidgets.QLabel):
+    """A QLabel driven by a QMovie, clipped to a rounded rect.
+
+    QSS border-radius only clips a QLabel's background/border, never a
+    pixmap drawn inside it (via setMovie or setPixmap) — the frame would
+    still paint square. Each frame is repainted here through a rounded
+    QPainterPath clip instead.
+    """
+
+    def __init__(self, radius: int, parent=None):
+        super().__init__(parent)
+        self._radius = radius
+
+    def paintEvent(self, event):
+        pix = self.pixmap()
+        if pix is None or pix.isNull():
+            super().paintEvent(event)
+            return
+        p = QtGui.QPainter(self)
+        p.setRenderHint(QtGui.QPainter.Antialiasing, True)
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(QtCore.QRectF(self.rect()), self._radius, self._radius)
+        p.setClipPath(path)
+        p.drawPixmap(self.rect(), pix)
+        p.end()
+
+
+class UpdateDownloadDialog(QtWidgets.QDialog):
+    """Progress dialog for the in-app updater.
+
+    Downloads the installer with a cancellable progress bar, then swaps in
+    a Restart Now button once it lands — Cancel stays available even after
+    the download finishes, in case the operator changes their mind, and
+    always deletes whatever was fetched rather than leaving a stray partial
+    (or full) installer behind in temp.
+    """
+
+    # The source clip is 1280x720 (16:9); this is its width inside the
+    # dialog, with height derived to keep that ratio.
+    _VIDEO_W = 384
+
+    def __init__(self, parent, url: str, version: str):
+        super().__init__(parent)
+        self.setWindowTitle("Downloading Update")
+        self.setModal(True)
+        self.setFixedWidth(440)
+        self.setStyleSheet(_base_style() + f"""
+            QDialog {{
+                background-color: {_BG};
+                border: 1px solid {_BORDER};
+                border-radius: {theme.R_CARD}px;
+            }}
+        """)
+
+        self._dest = os.path.join(
+            tempfile.gettempdir(), f"APEX_GCS_Setup_{version}.exe")
+        self._done_path = None
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(28, 24, 28, 20)
+        root.setSpacing(14)
+
+        # Pixie, looping silently for as long as the dialog is open — the
+        # download itself has no notion of visual progress worth animating
+        # frame-by-frame, so this just keeps the wait from feeling dead.
+        #
+        # QMovie/GIF rather than QMediaPlayer/mp4: the Qt5 multimedia
+        # backend's Windows video decoder depends on whatever DirectShow
+        # filters happen to be registered on the machine, and failed to
+        # open an ordinary H.264 mp4 outright on this one (ResourceError,
+        # no codec available) — not something to risk on a customer's PC
+        # with unknown codecs installed. GIF decodes through Qt's own
+        # built-in image plugin, no OS codec dependency at all.
+        video_h = round(self._VIDEO_W * 9 / 16)
+        self._video = _RoundedMovieLabel(theme.R_CARD)
+        self._video.setFixedSize(self._VIDEO_W, video_h)
+        root.addWidget(self._video, alignment=QtCore.Qt.AlignHCenter)
+
+        self._movie = QtGui.QMovie(DOWNLOAD_ANIMATION)
+        self._movie.setScaledSize(QtCore.QSize(self._VIDEO_W, video_h))
+        self._video.setMovie(self._movie)
+        self._movie.start()
+
+        title_lbl = QtWidgets.QLabel(f"Downloading APEX GCS v{version}…")
+        title_lbl.setStyleSheet(
+            f"color: {theme.CREAM}; font-size: {theme.FS_BODY}px; font-weight: 600;")
+        root.addWidget(title_lbl)
+
+        self._bar = QtWidgets.QProgressBar()
+        self._bar.setRange(0, 0)   # indeterminate until Content-Length is known
+        self._bar.setTextVisible(False)
+        self._bar.setFixedHeight(10)
+        root.addWidget(self._bar)
+
+        self._status = QtWidgets.QLabel("Starting download…")
+        self._status.setStyleSheet(f"color: {theme.SLATE}; font-size: {theme.FS_LABEL}px;")
+        root.addWidget(self._status)
+
+        row = QtWidgets.QHBoxLayout()
+        row.addStretch(1)
+        self._cancel_btn = QtWidgets.QPushButton("Cancel")
+        self._cancel_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._cancel_btn.clicked.connect(self._on_cancel)
+        row.addWidget(self._cancel_btn)
+
+        self._restart_btn = QtWidgets.QPushButton("Restart Now")
+        self._restart_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        self._restart_btn.clicked.connect(self._on_restart)
+        # Not objectName("primaryBtn") + the app stylesheet: _base_style()
+        # above sets a local `QPushButton {...}` rule, and once a widget has
+        # its own stylesheet, Qt resolves QPushButton styling against that
+        # local rule alone rather than merging it with the app-level
+        # `#primaryBtn` one — the id selector's gradient silently never
+        # applied. Reproducing it as one self-contained inline sheet here
+        # sidesteps the cascade entirely.
+        self._restart_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme.GRADIENT};
+                color: {theme.DEEP};
+                border: none;
+                font-family: "{theme.DISPLAY}";
+                font-weight: 700;
+                padding: 11px 20px;
+            }}
+            QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
+            QPushButton:disabled {{ background: {theme.LINE}; color: {theme.DISABLED}; }}
+        """)
+        # Disabled rather than hidden: toggling a layout item's visibility
+        # after the row has already been laid out left it reserving no
+        # space for Restart Now even once .show() was called on it —
+        # staying in the layout throughout and just flipping enabled state
+        # sidesteps that.
+        self._restart_btn.setEnabled(False)
+        row.addWidget(self._restart_btn)
+        root.addLayout(row)
+
+        self._thread = _DownloadThread(url, self._dest, self)
+        self._thread.progress.connect(self._on_progress)
+        self._thread.finished_ok.connect(self._on_finished)
+        self._thread.failed.connect(self._on_failed)
+        self._thread.start()
+
+    def closeEvent(self, event):
+        self._movie.stop()
+        super().closeEvent(event)
+
+    def _on_progress(self, done: int, total: int):
+        if total:
+            self._bar.setRange(0, total)
+            self._bar.setValue(done)
+            self._status.setText(f"{done / 1_048_576:.1f} / {total / 1_048_576:.1f} MB")
+        else:
+            self._status.setText(f"{done / 1_048_576:.1f} MB")
+
+    def _on_finished(self, path: str):
+        self._done_path = path
+        self._bar.setRange(0, 1)
+        self._bar.setValue(1)
+        self._status.setText("Download complete — ready to install.")
+        self._restart_btn.setEnabled(True)
+
+    def _on_failed(self, message: str):
+        self._status.setText(f"Download failed: {message}")
+        self._cancel_btn.setText("Close")
+
+    def _delete_download(self):
+        try:
+            if os.path.exists(self._dest):
+                os.remove(self._dest)
+        except OSError:
+            pass
+
+    def _on_cancel(self):
+        self._thread.cancel()
+        self._thread.wait(3000)
+        self._delete_download()
+        self.reject()
+
+    def _on_restart(self):
+        if not self._done_path or not os.path.exists(self._done_path):
+            return
+        # ShellExecuteW rather than os.startfile(): the installer needs the
+        # /VERYSILENT flags passed as parameters, which startfile has no way
+        # to carry. The "runas" verb is what actually raises the UAC prompt —
+        # the installer's embedded admin manifest alone doesn't trigger it
+        # from a plain CreateProcess.
+        result = ctypes.windll.shell32.ShellExecuteW(
+            None, "runas", self._done_path,
+            "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES", None, 1)
+        if result <= 32:
+            # <= 32 is every ShellExecute failure code, including 5 (the
+            # user clicked "No" on the UAC prompt) — nothing was launched.
+            ThemedMessageBox.critical(
+                self, "Could Not Start Update",
+                "The installer could not be launched.",
+                informative="The update was not approved or could not start.")
+            return
+
+        # The installer's own [Run] step relaunches APEX GCS once it's done,
+        # so this process just needs to get out of the way — anything else
+        # open would hold its files locked against being overwritten.
+        parent = self.parent()
+        if parent is not None and hasattr(parent, "_prepare_for_restart"):
+            parent._prepare_for_restart()
+        self.accept()
+        QtCore.QTimer.singleShot(200, lambda: os._exit(0))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
