@@ -25,6 +25,18 @@
 #                                devices only; no-internet / back-online
 #                                screens on sign-in (features landed in
 #                                77b4d86, just under this).
+#   v1.2.2  13f6f32  2026-10-11  GroundStation now launches maximized;
+#                                app icon rebuilt at full resolution (was
+#                                blurry upscaled from 48x48 everywhere
+#                                Windows shows it larger); manual sign-in
+#                                now plays the "Signing you in..." gif
+#                                instead of just a wait cursor; new update
+#                                dialog shows each release's GitHub notes,
+#                                auto-sized to the text, before download;
+#                                fixed Settings' "Check for Updates" button
+#                                silently doing nothing (now also reports
+#                                "already latest" / errors, not just a
+#                                found update).
 # ─────────────────────────────────────────────────────────────────────────
 import os
 import sys
