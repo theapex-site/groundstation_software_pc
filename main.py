@@ -33,13 +33,20 @@ from PyQt5 import QtCore, QtWidgets
 
 import theme
 from widgets.dialogs     import LoginWindow
-from core.ground_station import GroundStation
 
 # Must be set before the QApplication is constructed, or they do nothing.
 # Without them the whole UI is bitmap-upscaled on any display at 125% or 150%
 # scaling, which is the default on most current Windows laptops.
 QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_EnableHighDpiScaling, True)
 QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_UseHighDpiPixmaps, True)
+# QtWebEngineWidgets (right_panel.py's embedded map) now gets imported
+# lazily, after QApplication already exists — GroundStation only gets
+# built once a COM port is picked, from inside LoginWindow, so it's no
+# longer imported at module load time here. Qt requires this attribute
+# set before QApplication() in that case, or QtWebEngineWidgets refuses
+# to import at all ("must be imported or Qt.AA_ShareOpenGLContexts must
+# be set before a QCoreApplication instance is created").
+QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts, True)
 
 
 def main():
@@ -51,15 +58,13 @@ def main():
     theme.init(app)
     app.setStyleSheet(theme.qss())
 
-    # Show the Login + COM Port window
+    # Show the Login + COM Port window. LoginWindow builds and shows
+    # GroundStation itself (see _launch_main_window) once a port is picked,
+    # so its own "Opening Ground Control Station…" page stays on screen
+    # for that synchronous construction instead of the window just
+    # collapsing until the main window appears.
     login = LoginWindow()
     if login.exec_() == QtWidgets.QDialog.Accepted:
-        selected_port  = login.get_port()
-        logged_in_email = login.get_email()          # ← pass email through
-        window = GroundStation(selected_port, user_email=logged_in_email)
-        # Maximized, not showFullScreen(): fullscreen takes over the whole
-        # display (no taskbar), same convention as the RTG popup window.
-        window.showMaximized()
         sys.exit(app.exec_())
 
 

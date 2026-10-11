@@ -23,7 +23,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
 from config import (APEX_LOGO, PIXIE_BUBBLE, DOWNLOAD_ANIMATION,
                     SIGNIN_ANIMATION, NO_INTERNET_IMAGE, BACK_ONLINE_IMAGE,
-                    title, APP_VERSION)
+                    OPENING_STATION_IMAGE, title, APP_VERSION)
 import settings
 import theme
 import widgets.auth_backend as auth
@@ -1543,6 +1543,38 @@ class _SplashPage(QtWidgets.QWidget):
         self._was_offline = False
 
 
+class _OpeningPage(QtWidgets.QWidget):
+    """Shown after COM port selection while GroundStation() builds.
+
+    That constructor is synchronous and can take a few seconds (model
+    loading, widget construction for the whole main window) — without this
+    the login window just sat there looking like it had collapsed/frozen
+    until the main window finally popped up. A static image rather than a
+    gif here: the construction it covers blocks the GUI thread solid, so a
+    looping animation just stuttered/froze instead of playing — a still
+    image has nothing to look broken.
+    """
+
+    def __init__(self):
+        super().__init__()
+        lay = QtWidgets.QVBoxLayout(self)
+        lay.setAlignment(QtCore.Qt.AlignCenter)
+        lay.setSpacing(16)
+
+        logo = QtWidgets.QLabel()
+        logo.setAlignment(QtCore.Qt.AlignCenter)
+        pix = QtGui.QPixmap(OPENING_STATION_IMAGE).scaled(
+            QtCore.QSize(220, 220), QtCore.Qt.KeepAspectRatio,
+            QtCore.Qt.SmoothTransformation)
+        logo.setPixmap(pix)
+        lay.addWidget(logo)
+
+        msg = QtWidgets.QLabel("Opening Ground Control Station…")
+        msg.setAlignment(QtCore.Qt.AlignCenter)
+        msg.setStyleSheet(f"color:{_MUTED}; font-size:12px; letter-spacing:1px;")
+        lay.addWidget(msg)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  LoginWindow   ← called from main.py
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1670,12 +1702,14 @@ class LoginWindow(QtWidgets.QDialog):
         self._com_page    = _ComPortPage()
         self._reauth_page = _ReauthPage(self._session)
         self._splash_page = _SplashPage()
+        self._opening_page = _OpeningPage()
 
         self._stack.addWidget(self._login_page)    # index 0
         self._stack.addWidget(self._signup_page)   # index 1
         self._stack.addWidget(self._com_page)      # index 2
         self._stack.addWidget(self._reauth_page)   # index 3
         self._stack.addWidget(self._splash_page)   # index 4
+        self._stack.addWidget(self._opening_page)  # index 5
 
         # A saved "stay signed in" session already proved who this is last
         # time — showing the blank sign-in form while _resume_worker
@@ -1736,7 +1770,27 @@ class LoginWindow(QtWidgets.QDialog):
                 "No COM port selected. Please connect the device and refresh.")
             return
         self._selected_port = port
+        self._stack.setCurrentIndex(5)
+        # Let the opening page actually paint before GroundStation()'s
+        # synchronous construction blocks the GUI thread — a blocked event
+        # loop can't repaint on request (same reasoning as
+        # _resume_worker's), so firing this immediately would've looked
+        # exactly like the frozen/collapsed window this replaces.
+        QtCore.QTimer.singleShot(50, self._launch_main_window)
+
+    def _launch_main_window(self):
+        from core.ground_station import GroundStation
+        # Kept on self: a local variable would be garbage-collected (and
+        # the window torn down with it) once this method returns.
+        self._main_window = GroundStation(
+            self._selected_port, user_email=self._logged_in_email)
+        # Maximized, not showFullScreen(): fullscreen takes over the whole
+        # display (no taskbar), same convention as the RTG popup window.
+        self._main_window.showMaximized()
         self.accept()
+
+    def get_main_window(self):
+        return self._main_window
 
     def get_port(self) -> str:
         return self._selected_port
@@ -2465,9 +2519,21 @@ class UpdateDownloadDialog(QtWidgets.QDialog):
         # path — without it cmd strips the quotes wrong and the path with
         # spaces (Program Files) breaks.
         app_exe = sys.executable
+        log_path = os.path.join(
+            tempfile.gettempdir(), "APEX_GCS_install.log")
+        # `&` rather than `&&`: a silent Inno Setup installer can exit
+        # non-zero for reasons that don't mean the install actually failed
+        # (observed: files landed correctly but the app still never
+        # relaunched because this was `&&` and the installer's exit code
+        # wasn't 0). The app should come back either way — if the install
+        # really did fail, the customer launching into an unchanged version
+        # is far less confusing than it silently not launching at all.
+        # /LOG gives something to actually look at next time this happens,
+        # since /SUPPRESSMSGBOXES means no dialog ever shows the failure.
         cmd_line = (
             f'/c ""{self._done_path}" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES '
-            f'&& start "" "{app_exe}""'
+            f'/LOG="{log_path}" '
+            f'& start "" "{app_exe}""'
         )
         # ShellExecuteW rather than os.startfile(): needs both the /c
         # argument string and the "runas" verb, which startfile can't carry.
