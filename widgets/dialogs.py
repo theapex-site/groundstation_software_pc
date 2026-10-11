@@ -19,8 +19,8 @@ import tempfile, os
 import requests
 from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
-from config import (APEX_LOGO, PIXIE_LOGO, PIXIE_BUBBLE, DOWNLOAD_ANIMATION,
-                    title, APP_VERSION)
+from config import (APEX_LOGO, PIXIE_BUBBLE, DOWNLOAD_ANIMATION,
+                    SIGNIN_ANIMATION, title, APP_VERSION)
 import settings
 import theme
 import widgets.auth_backend as auth
@@ -527,6 +527,7 @@ class _LoginPage(QtWidgets.QWidget):
         # itself going unresponsive — see _try_resume's own comment).
         self._resume_label = QtWidgets.QLabel("Checking saved sign-in…")
         self._resume_label.setStyleSheet(f"color:{_ACCENT}; font-size:11px;")
+        self._resume_label.setAlignment(QtCore.Qt.AlignCenter)
         self._resume_label.hide()
         lay.addWidget(self._resume_label)
 
@@ -1129,6 +1130,25 @@ class _SignUpPage(QtWidgets.QWidget):
         self.signup_done.emit()
 
 
+# Silicon Labs' USB vendor ID (shared by every CP210x variant) — the
+# authoritative check, since manufacturer/description strings vary by OS
+# and driver version. Matched on either, so a port still shows up if
+# Windows ever reports the VID oddly but keeps the vendor string. Used by
+# both port pickers (initial sign-in and manual reconnect) so only the
+# ground station's actual radio ever shows up, not whatever else is plugged
+# in — a Bluetooth virtual port, another USB-serial gadget, etc.
+_SILABS_VID = 0x10C4
+
+
+def _silabs_ports():
+    return [
+        p for p in serial.tools.list_ports.comports()
+        if p.vid == _SILABS_VID
+        or "silicon labs" in (p.manufacturer or "").lower()
+        or "cp210" in (p.description or "").lower()
+    ]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Page 2 — COM Port selector  (right-panel widget)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1230,7 +1250,7 @@ class _ComPortPage(QtWidgets.QWidget):
 
     def _refresh(self):
         self.combo.clear()
-        ports = serial.tools.list_ports.comports()
+        ports = _silabs_ports()
         for p in ports:
             self.combo.addItem(f"{p.device}  —  {p.description}")
         if not ports:
@@ -1299,10 +1319,11 @@ class _SplashPage(QtWidgets.QWidget):
 
         logo = QtWidgets.QLabel()
         logo.setAlignment(QtCore.Qt.AlignCenter)
-        pix = QtGui.QPixmap(PIXIE_LOGO)
-        if not pix.isNull():
-            logo.setPixmap(pix.scaled(
-                120, 120, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
+        logo.setFixedSize(220, 220)
+        self._movie = QtGui.QMovie(SIGNIN_ANIMATION)
+        self._movie.setScaledSize(QtCore.QSize(220, 220))
+        logo.setMovie(self._movie)
+        self._movie.start()
         lay.addWidget(logo)
 
         msg = QtWidgets.QLabel("Signing you in…")
@@ -1594,7 +1615,7 @@ class ComPortSelector(QtWidgets.QDialog):
 
     def refresh_ports(self):
         self.combo.clear()
-        ports = serial.tools.list_ports.comports()
+        ports = _silabs_ports()
         for port in ports:
             self.combo.addItem(f"{port.device}  —  {port.description}")
         if not ports:
@@ -2615,7 +2636,25 @@ class UserProfileDialog(QtWidgets.QDialog):
         ("State",       "State"),
         ("Country",     "Country"),
         ("Pincode",     "Pincode"),
+        ("LicenceKey",  "Licence Key"),
     ]
+
+    @staticmethod
+    def _mask_licence_key(raw: str) -> str:
+        """First 4 and last 4 characters left visible, everything between
+        replaced with X, dashes left where they are — so
+        "APEX-ABCDE-FGHIJ-KLMNO-PQRST" reads as "APEX-ABXXX-XXXXX-XXXXX-
+        XXXRST". Masking in place rather than reflowing into fixed 4-char
+        groups keeps whatever grouping the real key actually has, instead
+        of showing a shape it was never issued in.
+        """
+        chars = list(raw)
+        positions = [i for i, c in enumerate(chars) if c != "-"]
+        keep = set(positions[:4]) | set(positions[-4:])
+        for i in positions:
+            if i not in keep:
+                chars[i] = "X"
+        return "".join(chars)
 
     def __init__(self, email: str, parent=None):
         super().__init__(parent)
@@ -2895,6 +2934,8 @@ class UserProfileDialog(QtWidgets.QDialog):
                 val = str(info.get(key) or info_lower.get(key.lower(), "")).strip()
                 if key == "Email" and not val:
                     val = self._email
+                if key == "LicenceKey" and val:
+                    val = self._mask_licence_key(val)
                 lbl.setText(val if val else "—")
                 if val:
                     filled += 1

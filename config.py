@@ -21,12 +21,27 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+# Where APEX_GCS_Saved/ (mission logs, captured images, detection output)
+# actually gets written. Deliberately NOT resource_path()/sys._MEIPASS: that
+# resolves to the install folder, and a standard (non-admin) Windows account
+# cannot write inside Program Files — every such write crashed the app
+# outright on first launch for anyone who hadn't happened to run it elevated.
+# %LOCALAPPDATA% is always writable by the signed-in user, survives
+# reinstalls/updates since it's outside the install folder entirely, and is
+# the standard place Windows apps keep per-user working data.
+if getattr(sys, "frozen", False):
+    DATA_ROOT = os.path.join(
+        os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "APEX GCS")
+else:
+    DATA_ROOT = os.path.abspath(".")
+
 IMAGES_DIR = resource_path("images")
 
 APEX_LOGO  = os.path.join(IMAGES_DIR, "Apex Logo.png")
 PIXIE_LOGO  = os.path.join(IMAGES_DIR, "pixie_thinking.png")
 PIXIE_BUBBLE = os.path.join(IMAGES_DIR, "pixie_bubble.png")
 DOWNLOAD_ANIMATION = os.path.join(IMAGES_DIR, "download_animation.gif")
+SIGNIN_ANIMATION = os.path.join(IMAGES_DIR, "signin_pixie.gif")
 # BG1.jpg is no longer used: widgets/space_bg.py generates the website's
 # starfield instead. The file is left in images/ for now rather than deleted.
 title      = os.path.join(IMAGES_DIR, "GCS_img.png")

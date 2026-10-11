@@ -20,6 +20,7 @@ import os
 import random
 import struct
 import sys
+import tempfile
 import threading
 import time
 import zlib
@@ -39,6 +40,7 @@ import theme
 from config import (
     BAUD_RATE, SERIAL_TIMEOUT, SERIAL_POLL_MS,
     PACKET_SIZE, IMAGE_RX_TIMEOUT, FILE_INFO_TIMEOUT, IMAGE_MODE_TIMEOUT,
+    DATA_ROOT,
 )
 from widgets.telemetry_panel import TelemetryPanel
 from widgets.right_panel      import RightPanel
@@ -450,8 +452,20 @@ class GroundStation(QtWidgets.QMainWindow):
     #  Mission log helpers
     # ══════════════════════════════════════════════════════════════════════════
     def _init_mission_log(self):
-        temp_dir = os.path.join(BASE_PATH, "APEX_GCS_Saved", "temp")
-        os.makedirs(temp_dir, exist_ok=True)
+        temp_dir = os.path.join(DATA_ROOT, "APEX_GCS_Saved", "temp")
+        try:
+            os.makedirs(temp_dir, exist_ok=True)
+        except OSError as e:
+            # DATA_ROOT should always be writable (it's %LOCALAPPDATA%), but
+            # this used to be BASE_PATH — Program Files — and crashed the
+            # whole app on startup for anyone not running elevated. Falling
+            # back to the system temp dir rather than letting any future
+            # write problem (disk full, AV lock, odd permissions) do the
+            # same again.
+            print("Mission log directory error, falling back to system temp:", e)
+            temp_dir = os.path.join(tempfile.gettempdir(), "APEX_GCS_Saved", "temp")
+            os.makedirs(temp_dir, exist_ok=True)
+
         self.temp_path = os.path.join(
             temp_dir,
             f"temp_mission_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -471,7 +485,10 @@ class GroundStation(QtWidgets.QMainWindow):
         self._ws_flag.append(["Timestamp", "Flag"])
         self._ws_link = self._wb.create_sheet("Link Status")
         self._ws_link.append(["Timestamp", "Connected", "RSSI", "SNR"])
-        self._wb.save(self.temp_path)
+        try:
+            self._wb.save(self.temp_path)
+        except OSError as e:
+            print("Mission log initial save error:", e)
 
         self._mission_saved      = False
         # Every sensor channel's history, kept whether or not RTG is open.
@@ -1055,8 +1072,13 @@ class GroundStation(QtWidgets.QMainWindow):
         self._exit_image_mode(final_image)
 
     def _save_received_image(self, image_bytes: bytes):
-        folder = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "camera")
-        os.makedirs(folder, exist_ok=True)
+        folder = os.path.join(DATA_ROOT, "APEX_GCS_Saved", "images", "camera")
+        try:
+            os.makedirs(folder, exist_ok=True)
+        except OSError as e:
+            print("Image save directory error, falling back to system temp:", e)
+            folder = os.path.join(tempfile.gettempdir(), "APEX_GCS_Saved", "images", "camera")
+            os.makedirs(folder, exist_ok=True)
         filename    = datetime.now().strftime("IMG_%Y%m%d_%H%M%S.jpg")
         path        = os.path.join(folder, filename)
         cubesat_id  = self.telemetry.cubesat_id.text().strip() or "APEX"

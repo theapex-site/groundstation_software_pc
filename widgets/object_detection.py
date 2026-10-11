@@ -52,6 +52,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QImage, QPixmap
 
 import theme
+from config import DATA_ROOT
 from widgets.dialogs import ThemedMessageBox
 
 # ── BASE_PATH (mirrors config.py / right_panel.py pattern) ───────────────────
@@ -63,9 +64,12 @@ else:
 MODEL_PATH   = os.path.join(BASE_PATH, "models", "fasterrcnn_resnet50_fpn_v2_coco.onnx")
 os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
-CAMERA_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "camera")
-DETECT_DIR   = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "object_detect")
-_LEGACY_DIR  = os.path.join(BASE_PATH, "APEX_GCS_Saved", "images", "debrie_detect")
+# Written at runtime, so DATA_ROOT (%LOCALAPPDATA%, always writable) — not
+# BASE_PATH, which is the Program Files install folder when frozen and
+# crashed the app for anyone running it without admin rights.
+CAMERA_DIR   = os.path.join(DATA_ROOT, "APEX_GCS_Saved", "images", "camera")
+DETECT_DIR   = os.path.join(DATA_ROOT, "APEX_GCS_Saved", "images", "object_detect")
+_LEGACY_DIR  = os.path.join(DATA_ROOT, "APEX_GCS_Saved", "images", "debrie_detect")
 
 # ── COCO class names ────────────────────────────────────────────────────────
 # These used to come from torchvision's weight metadata. torchvision is no

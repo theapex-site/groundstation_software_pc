@@ -25,7 +25,7 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 
 import theme
-from config import DEFAULT_LAT, DEFAULT_LON
+from config import DEFAULT_LAT, DEFAULT_LON, DATA_ROOT
 from widgets.dialogs import ThemedMessageBox
 from widgets.object_detection import ObjectDetectionDialog
 
@@ -511,11 +511,11 @@ class RightPanel(QtWidgets.QFrame):
         import shutil
         now      = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         filename = f"MissionInfo_{now}.xlsx"
-        save_dir = os.path.join(BASE_PATH, "APEX_GCS_Saved", "data")
-        os.makedirs(save_dir, exist_ok=True)
+        save_dir = os.path.join(DATA_ROOT, "APEX_GCS_Saved", "data")
         full_path = os.path.join(save_dir, filename)
 
         try:
+            os.makedirs(save_dir, exist_ok=True)
             shutil.copy2(parent.temp_path, full_path)
             parent._mission_saved = True
             if os.path.exists(parent.temp_path):
