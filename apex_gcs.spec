@@ -1,4 +1,31 @@
 # apex_gcs.spec
+#
+# ── Release history ──────────────────────────────────────────────────────
+# To rebuild an old version exactly: `git checkout <commit>`, then run
+# PyInstaller + ISCC against this same spec/installer.iss as normal.
+#
+#   v1.1.0  b4e1318  2026-10-11  Fixed frozen build missing assets/ and
+#                                fonts/ (icons/custom fonts were blank in
+#                                the installed app).
+#   v1.1.1  49ab1a2  2026-10-11  Version bump only, no code change.
+#   v1.1.2  9051ec5  2026-10-11  Pixie thought-bubble messaging (replaces
+#                                the toast when she's on screen); Firestore
+#                                profile cached after login instead of
+#                                refetched every time Settings opens.
+#   v1.2.0  121133c  2026-10-11  In-app self-updater: download progress
+#                                dialog with Pixie's animation, Cancel,
+#                                silent elevated install + auto-relaunch
+#                                (feature landed in a67e6df, just under
+#                                this).
+#   v1.2.1  087deab  2026-10-11  Fixed a startup crash for non-admin users
+#                                (app data moved to %LOCALAPPDATA%); fixed
+#                                the self-updater not auto-relaunching;
+#                                licence key shown masked in profile;
+#                                COM port pickers filtered to Silicon Labs
+#                                devices only; no-internet / back-online
+#                                screens on sign-in (features landed in
+#                                77b4d86, just under this).
+# ─────────────────────────────────────────────────────────────────────────
 import os
 import sys
 
