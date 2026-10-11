@@ -47,8 +47,7 @@ from widgets.right_panel      import RightPanel
 from widgets.graphs           import MiniGraph, GraphPopup
 from widgets.rtg              import RTGWindow
 from widgets.dialogs          import (Toast, PixieBubble, ThemedMessageBox,
-                                     UserProfileDialog, SettingsDialog,
-                                     UpdateDownloadDialog)
+                                     UserProfileDialog, SettingsDialog)
 
 if getattr(sys, 'frozen', False):
     BASE_PATH = sys._MEIPASS
@@ -542,27 +541,10 @@ class GroundStation(QtWidgets.QMainWindow):
     # ══════════════════════════════════════════════════════════════════════════
     #  Auto-update
     # ══════════════════════════════════════════════════════════════════════════
-    @QtCore.pyqtSlot(str, str, bool)
-    def _show_update_dialog(self, latest_version, download_url, is_installer):
-        import webbrowser
-        from config import APP_VERSION
-        reply = ThemedMessageBox.question(
-            self, "Update Available",
-            "A new version of APEX GCS is available!",
-            informative=(f"Current: v{APP_VERSION}\n"
-                         f"Latest:  v{latest_version}\n\n"
-                         f"Would you like to download it now?"),
-            buttons=["Download", "Not Now"],
-        )
-        if reply != "Download":
-            return
-        if is_installer:
-            dlg = UpdateDownloadDialog(self, download_url, latest_version)
-            dlg.exec_()
-        else:
-            # No .exe asset on the release — nothing to stream and install,
-            # so the release page is the best fallback.
-            webbrowser.open(download_url)
+    # Dialog-showing itself lives in core.updater now — it owns the result
+    # signals, so any parent (this window, or the Settings dialog for a
+    # manual check) gets the same behaviour instead of only whichever
+    # object happened to define a _show_update_dialog slot.
 
     def _prepare_for_restart(self):
         """Called just before the updater hands off to the installer and

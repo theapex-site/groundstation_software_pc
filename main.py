@@ -57,7 +57,9 @@ def main():
         selected_port  = login.get_port()
         logged_in_email = login.get_email()          # ← pass email through
         window = GroundStation(selected_port, user_email=logged_in_email)
-        window.show()
+        # Maximized, not showFullScreen(): fullscreen takes over the whole
+        # display (no taskbar), same convention as the RTG popup window.
+        window.showMaximized()
         sys.exit(app.exec_())
 
 

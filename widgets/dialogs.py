@@ -472,6 +472,10 @@ class _LoginPage(QtWidgets.QWidget):
     # the whole point of routing the result through one instead of just
     # acting on it from the worker thread directly.
     _resume_done = QtCore.pyqtSignal(dict)
+    # Internal: same handoff as _resume_done, for the manual Sign In button
+    # rather than the saved-session resume — _do_login's fb.* calls also
+    # block on the network, so they run off the GUI thread too.
+    _login_done = QtCore.pyqtSignal(dict)
 
     def __init__(self, session: dict):
         """session dict is shared with LoginWindow for Stay-Signed-In."""
@@ -481,6 +485,7 @@ class _LoginPage(QtWidgets.QWidget):
         self._resume_started = False
         self._build()
         self._resume_done.connect(self._on_resume_done)
+        self._login_done.connect(self._on_login_done)
 
     def set_online(self, online: bool):
         """Driven by LoginWindow's shared _InternetWatcher. The resume
@@ -614,6 +619,30 @@ class _LoginPage(QtWidgets.QWidget):
         self._form_widget = QtWidgets.QWidget()
         outer.addWidget(self._form_widget)
 
+        # Same "Signing you in…" gif the splash page uses for a resumed
+        # session — a manual sign-in also blocks on Firebase for a moment,
+        # and a frozen-looking form (or just a wait cursor) read as the
+        # click not having registered.
+        self._signing_widget = QtWidgets.QWidget()
+        self._signing_widget.hide()
+        outer.addWidget(self._signing_widget)
+        sign_lay = QtWidgets.QVBoxLayout(self._signing_widget)
+        sign_lay.setAlignment(QtCore.Qt.AlignCenter)
+        sign_lay.setSpacing(16)
+
+        signing_logo = QtWidgets.QLabel()
+        signing_logo.setAlignment(QtCore.Qt.AlignCenter)
+        signing_logo.setFixedSize(220, 220)
+        self._signing_movie = QtGui.QMovie(SIGNIN_ANIMATION)
+        self._signing_movie.setScaledSize(QtCore.QSize(220, 220))
+        signing_logo.setMovie(self._signing_movie)
+        sign_lay.addWidget(signing_logo)
+
+        signing_msg = QtWidgets.QLabel("Signing you in…")
+        signing_msg.setAlignment(QtCore.Qt.AlignCenter)
+        signing_msg.setStyleSheet(f"color:{_MUTED}; font-size:12px; letter-spacing:1px;")
+        sign_lay.addWidget(signing_msg)
+
         lay = QtWidgets.QVBoxLayout(self._form_widget)
         lay.setContentsMargins(40, 40, 40, 40)
         lay.setSpacing(10)
@@ -724,44 +753,78 @@ class _LoginPage(QtWidgets.QWidget):
                                           "Please enter email and password.")
             return
 
-        QtWidgets.QApplication.setOverrideCursor(QtCore.Qt.WaitCursor)
+        self._form_widget.hide()
+        self._signing_widget.show()
+        self._signing_movie.start()
+        threading.Thread(
+            target=self._login_worker, args=(email, pwd), daemon=True).start()
+
+    def _login_worker(self, email: str, pwd: str):
+        """Off the GUI thread for the same reason as _resume_worker: these
+        are all blocking Firebase calls, and the signing-in gif can't
+        animate while the GUI thread is stuck waiting on the network."""
         try:
             session = fb.sign_in(email, pwd)
 
             if not fb.account_info(session["idToken"]).get("emailVerified"):
-                QtWidgets.QApplication.restoreOverrideCursor()
-                ThemedMessageBox.warning(
-                    self, "Email Not Verified",
-                    "Please confirm the verification link we emailed to\n"
-                    + email + "\n\nThen sign in again.")
                 try:
                     fb.send_verification_email(session["idToken"])
                 except fb.AuthError:
                     pass
+                self._login_done.emit({"kind": "unverified", "email": email})
                 return
 
             profile = fb.fetch_profile(session)
             licence = (profile or {}).get("licenceKey", "")
             if not licence:
-                QtWidgets.QApplication.restoreOverrideCursor()
-                self.needs_reauth.emit(
-                    session["email"], session,
-                    "This account has no APEX GCS licence attached.")
+                self._login_done.emit({
+                    "kind": "needs_reauth", "email": session["email"],
+                    "session": session,
+                    "msg": "This account has no APEX GCS licence attached.",
+                })
                 return
 
             # Re-checked on every sign-in, so a cancelled licence stops working
             # and signing in here is what signs any other computer out.
             ok, msg = fb.check_entitlement(session, licence)
         except fb.AuthError as exc:
-            QtWidgets.QApplication.restoreOverrideCursor()
-            ThemedMessageBox.critical(self, "Login Failed", str(exc))
+            self._login_done.emit({"kind": "error", "msg": str(exc)})
             return
-        finally:
-            QtWidgets.QApplication.restoreOverrideCursor()
 
         if not ok:
-            self.needs_reauth.emit(session["email"], session, msg)
+            self._login_done.emit({
+                "kind": "needs_reauth", "email": session["email"],
+                "session": session, "msg": msg,
+            })
             return
+
+        self._login_done.emit({
+            "kind": "success", "email": email, "session": session,
+            "profile": profile,
+        })
+
+    def _on_login_done(self, result: dict):
+        """Back on the GUI thread — safe to touch widgets and self._session
+        here, unlike in _login_worker()."""
+        self._signing_movie.stop()
+        self._signing_widget.hide()
+        self._form_widget.show()
+        kind = result["kind"]
+
+        if kind == "unverified":
+            ThemedMessageBox.warning(
+                self, "Email Not Verified",
+                "Please confirm the verification link we emailed to\n"
+                + result["email"] + "\n\nThen sign in again.")
+            return
+        if kind == "error":
+            ThemedMessageBox.critical(self, "Login Failed", result["msg"])
+            return
+        if kind == "needs_reauth":
+            self.needs_reauth.emit(result["email"], result["session"], result["msg"])
+            return
+
+        email, session, profile = result["email"], result["session"], result["profile"]
 
         # Only the email is remembered now. The old code wrote the password to
         # a temp file in plain text; the refresh token below is scoped, and is
@@ -2080,6 +2143,159 @@ class _RoundedMovieLabel(QtWidgets.QLabel):
         p.end()
 
 
+def _format_release_notes(raw: str) -> str:
+    """Reshapes a raw GitHub release body into markdown that actually
+    renders the way GitHub's own release page shows it.
+
+    The body isn't real CommonMark: section names like "Fixes" are plain
+    lines, not "## " headings, and GitHub's "• " bullets aren't "- " list
+    items. Feeding that straight to QTextEdit.setMarkdown() collapses every
+    single newline into one run-on paragraph — every heading and bullet on
+    one line. This turns each bullet line into a real list item and each
+    plain line into its own bold heading paragraph, with a blank line
+    between a heading and the list under it (CommonMark needs the
+    separation, or they merge right back together).
+    """
+    text = raw.replace("\r\n", "\n").replace("\r", "\n").strip()
+    bullet_chars = ("•", "‣", "◦", "⁃", "∙", "*", "-", "+")
+    out = []
+    for line in (l.strip() for l in text.split("\n")):
+        if not line:
+            continue
+        is_bullet = line[0] in bullet_chars and (len(line) == 1 or line[1] == " ")
+        if is_bullet:
+            out.append("- " + line[1:].strip())
+        else:
+            if out:
+                out.append("")
+            out.append(f"**{line}**")
+    return "\n".join(out)
+
+
+class UpdateNotesDialog(QtWidgets.QDialog):
+    """Shown when a newer release is found, before the download starts.
+
+    Renders that release's GitHub notes (the changelog text typed when it
+    was published) so an update reads as "here's what changed" rather than
+    just a version number to trust blindly. The window grows to fit the
+    notes' actual rendered height instead of clipping a long changelog in a
+    fixed box or leaving a short one floating in empty space — capped so a
+    huge release body still fits on screen.
+    """
+
+    _WIDTH = 640
+    _MIN_NOTES_H = 140
+    _MAX_NOTES_H = 520
+
+    def __init__(self, parent, current_version: str, latest_version: str, notes: str):
+        super().__init__(parent)
+        self.setWindowTitle("Update Available")
+        self.setModal(True)
+        self.setFixedWidth(self._WIDTH)
+        self.setStyleSheet(_base_style() + f"""
+            QDialog {{
+                background-color: {_BG};
+                border: 1px solid {_BORDER};
+                border-radius:{theme.R_CARD}px;
+            }}
+        """)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(32, 28, 32, 24)
+        root.setSpacing(16)
+
+        # ── Icon + title row ─────────────────────────────────────────────
+        hdr = QtWidgets.QHBoxLayout()
+        icon_lbl = QtWidgets.QLabel()
+        icon_lbl.setPixmap(theme.icon("info", _ACCENT, 28).pixmap(28, 28))
+        icon_lbl.setFixedWidth(40)
+        title_lbl = QtWidgets.QLabel("Update Available")
+        title_lbl.setStyleSheet(
+            f"color:{_ACCENT}; font-size:17px; font-weight:bold;")
+        hdr.addWidget(icon_lbl)
+        hdr.addWidget(title_lbl)
+        hdr.addStretch()
+        root.addLayout(hdr)
+
+        line = QtWidgets.QFrame()
+        line.setFrameShape(QtWidgets.QFrame.HLine)
+        line.setStyleSheet(f"color:{_BORDER};")
+        root.addWidget(line)
+
+        ver_lbl = QtWidgets.QLabel(
+            f"Current: v{current_version}    →    Latest: v{latest_version}")
+        ver_lbl.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY + 1}px;")
+        root.addWidget(ver_lbl)
+
+        notes_title = QtWidgets.QLabel("WHAT'S NEW")
+        notes_title.setStyleSheet(
+            f"color:{_MUTED}; font-size:11px; font-weight:bold; letter-spacing:1px;")
+        root.addWidget(notes_title)
+
+        # QTextEdit, not QLabel: release notes are markdown (GitHub renders
+        # them that way on the releases page), and setMarkdown() is the
+        # only widget here that turns "- fixed X" into an actual bullet
+        # instead of a literal dash.
+        self._notes_view = QtWidgets.QTextEdit()
+        self._notes_view.setReadOnly(True)
+        self._notes_view.setFrameShape(QtWidgets.QFrame.NoFrame)
+        self._notes_view.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self._notes_view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+        self._notes_view.setStyleSheet(f"""
+            QTextEdit {{
+                background: transparent; color:{_TEXT};
+                font-size:{theme.FS_BODY + 1}px; border: none;
+            }}
+        """)
+        if notes.strip():
+            self._notes_view.setMarkdown(_format_release_notes(notes))
+        else:
+            self._notes_view.setPlainText(
+                "No release notes were provided for this version.")
+        root.addWidget(self._notes_view)
+
+        # ── Buttons ──────────────────────────────────────────────────────
+        btn_row = QtWidgets.QHBoxLayout()
+        btn_row.addStretch()
+        not_now_btn = QtWidgets.QPushButton("Not Now")
+        not_now_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        not_now_btn.clicked.connect(self.reject)
+
+        update_btn = QtWidgets.QPushButton("Update")
+        update_btn.setCursor(QtCore.Qt.PointingHandCursor)
+        # Same recipe as UpdateDownloadDialog's Restart Now button, not
+        # setObjectName("primaryBtn") + the app stylesheet: _base_style()
+        # sets a local `QPushButton {...}` rule on this dialog, and once a
+        # widget has its own stylesheet, Qt resolves QPushButton styling
+        # against that local rule alone rather than merging it with the
+        # app-level `#primaryBtn` one — the id selector's gradient silently
+        # never applied. Reproducing it as one self-contained inline sheet
+        # here sidesteps the cascade entirely.
+        update_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: {theme.GRADIENT};
+                color: {theme.DEEP};
+                border: none;
+                font-family: "{theme.DISPLAY}";
+                font-weight: 700;
+                padding: 11px 20px;
+            }}
+            QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
+        """)
+        update_btn.clicked.connect(self.accept)
+        btn_row.addWidget(not_now_btn)
+        btn_row.addWidget(update_btn)
+        root.addLayout(btn_row)
+
+        # ── Auto-size to the notes' rendered height ─────────────────────
+        content_w = self._WIDTH - 64   # inside the 32px side margins
+        self._notes_view.document().setTextWidth(content_w)
+        doc_h = self._notes_view.document().size().height()
+        notes_h = max(self._MIN_NOTES_H, min(self._MAX_NOTES_H, int(doc_h) + 12))
+        self._notes_view.setFixedHeight(notes_h)
+        self.adjustSize()
+
+
 class UpdateDownloadDialog(QtWidgets.QDialog):
     """Progress dialog for the in-app updater.
 
@@ -3334,7 +3550,7 @@ class SettingsDialog(QtWidgets.QDialog):
 
     def _check_updates(self):
         import core.updater
-        core.updater.check_for_updates(self)
+        core.updater.check_for_updates(self, silent=False)
 
     def _save(self):
         settings.set_("serial/baud", self._baud.currentData())
