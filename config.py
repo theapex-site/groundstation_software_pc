@@ -9,7 +9,7 @@ Colours, fonts, radii and the stylesheet live in theme.py.
 import os
 import sys
 
-APP_VERSION = "1.2.0"
+APP_VERSION = "1.2.1"
 GITHUB_REPO = "theapex-site/groundstation_software_pc"
 
 def resource_path(relative_path):
@@ -42,6 +42,8 @@ PIXIE_LOGO  = os.path.join(IMAGES_DIR, "pixie_thinking.png")
 PIXIE_BUBBLE = os.path.join(IMAGES_DIR, "pixie_bubble.png")
 DOWNLOAD_ANIMATION = os.path.join(IMAGES_DIR, "download_animation.gif")
 SIGNIN_ANIMATION = os.path.join(IMAGES_DIR, "signin_pixie.gif")
+NO_INTERNET_IMAGE = os.path.join(IMAGES_DIR, "no_internet.png")
+BACK_ONLINE_IMAGE = os.path.join(IMAGES_DIR, "back_online.png")
 # BG1.jpg is no longer used: widgets/space_bg.py generates the website's
 # starfield instead. The file is left in images/ for now rather than deleted.
 title      = os.path.join(IMAGES_DIR, "GCS_img.png")

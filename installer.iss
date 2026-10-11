@@ -2,7 +2,7 @@
 
 [Setup]
 AppName=APEX Ground Control Station
-AppVersion=1.2.0
+AppVersion=1.2.1
 AppPublisher=APEX
 DefaultDirName={autopf}\APEX GCS
 DefaultGroupName=APEX GCS

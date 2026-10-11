@@ -12,6 +12,8 @@ All themed popup windows for the APEX GCS.
 """
 import os
 import json
+import socket
+import sys
 import tempfile
 import threading
 import serial.tools.list_ports
@@ -20,7 +22,8 @@ import requests
 from PyQt5 import QtWidgets, QtCore, QtGui
 import ctypes, time
 from config import (APEX_LOGO, PIXIE_BUBBLE, DOWNLOAD_ANIMATION,
-                    SIGNIN_ANIMATION, title, APP_VERSION)
+                    SIGNIN_ANIMATION, NO_INTERNET_IMAGE, BACK_ONLINE_IMAGE,
+                    title, APP_VERSION)
 import settings
 import theme
 import widgets.auth_backend as auth
@@ -392,6 +395,68 @@ class _ReauthPage(QtWidgets.QWidget):
         self.reauth_success.emit(session["email"])
 
 
+class _InternetWatcher(QtCore.QObject):
+    """Polls for a live connection every couple of seconds, emitting
+    online_changed only when the state actually flips rather than on every
+    poll — one instance, shared by the login form and the splash page, so
+    there's a single check loop rather than each page running its own.
+
+    A quick raw-socket connection attempt to a public DNS resolver, not an
+    HTTP request: this only needs to know whether the network is reachable
+    at all, not whether any particular service is up, and a socket connect
+    is cheaper and has nothing to parse.
+    """
+    online_changed = QtCore.pyqtSignal(bool)
+
+    _CHECK_HOST = ("8.8.8.8", 53)
+    _INTERVAL_MS = 2000
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._online = None   # unknown until the first check resolves
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._check)
+
+    def start(self):
+        self._check()
+        self._timer.start(self._INTERVAL_MS)
+
+    def stop(self):
+        self._timer.stop()
+
+    def _check(self):
+        threading.Thread(target=self._check_worker, daemon=True).start()
+
+    def _check_worker(self):
+        try:
+            socket.create_connection(self._CHECK_HOST, timeout=1.5).close()
+            online = True
+        except OSError:
+            online = False
+        QtCore.QMetaObject.invokeMethod(
+            self, "_report", QtCore.Qt.QueuedConnection, QtCore.Q_ARG(bool, online))
+
+    @QtCore.pyqtSlot(bool)
+    def _report(self, online):
+        if online != self._online:
+            self._online = online
+            self.online_changed.emit(online)
+
+
+def _offline_sticker(parent=None) -> tuple:
+    """A centred, fixed-size image label for the no-internet/back-online
+    swap, plus the two pre-scaled pixmaps to show in it — built once per
+    page so the scaling cost isn't repeated on every state flip."""
+    label = QtWidgets.QLabel(parent)
+    label.setAlignment(QtCore.Qt.AlignCenter)
+    size = QtCore.QSize(260, 260)
+    no_net = QtGui.QPixmap(NO_INTERNET_IMAGE).scaled(
+        size, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+    back_on = QtGui.QPixmap(BACK_ONLINE_IMAGE).scaled(
+        size, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+    return label, no_net, back_on
+
+
 class _LoginPage(QtWidgets.QWidget):
     # Signals emitted to LoginWindow
     login_success   = QtCore.pyqtSignal(str)   # carries the logged-in email
@@ -412,11 +477,37 @@ class _LoginPage(QtWidgets.QWidget):
         """session dict is shared with LoginWindow for Stay-Signed-In."""
         super().__init__()
         self._session = session
+        self._was_offline = False
+        self._resume_started = False
         self._build()
         self._resume_done.connect(self._on_resume_done)
-        # Resume after the window has painted, so a slow network shows the
-        # login form first rather than a blank panel.
-        QtCore.QTimer.singleShot(0, self._start_resume)
+
+    def set_online(self, online: bool):
+        """Driven by LoginWindow's shared _InternetWatcher. The resume
+        attempt (if there's a saved session to resume) only ever fires from
+        here — once online is confirmed — rather than firing immediately on
+        construction and letting a dead network just fail it."""
+        if online:
+            if self._was_offline:
+                self._sticker.setPixmap(self._back_online_pix)
+                self._offline_widget.show()
+                self._form_widget.hide()
+                QtCore.QTimer.singleShot(2000, self._reveal_form)
+            else:
+                self._reveal_form()
+        else:
+            self._was_offline = True
+            self._form_widget.hide()
+            self._sticker.setPixmap(self._no_internet_pix)
+            self._offline_widget.show()
+
+    def _reveal_form(self):
+        self._offline_widget.hide()
+        self._form_widget.show()
+        self._was_offline = False
+        if not self._resume_started:
+            self._resume_started = True
+            self._start_resume()
 
     def _start_resume(self):
         token = self._session.get("refreshToken")
@@ -504,7 +595,26 @@ class _LoginPage(QtWidgets.QWidget):
             self.login_success.emit(result["email"])
 
     def _build(self):
-        lay = QtWidgets.QVBoxLayout(self)
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        # No-internet / back-online swap — replaces the form entirely while
+        # offline rather than sitting alongside it, since neither manual
+        # sign-in nor a saved-session resume can go anywhere without a
+        # connection regardless.
+        self._offline_widget = QtWidgets.QWidget()
+        off_lay = QtWidgets.QVBoxLayout(self._offline_widget)
+        off_lay.setAlignment(QtCore.Qt.AlignCenter)
+        self._sticker, self._no_internet_pix, self._back_online_pix = \
+            _offline_sticker(self._offline_widget)
+        off_lay.addWidget(self._sticker)
+        self._offline_widget.hide()
+        outer.addWidget(self._offline_widget)
+
+        self._form_widget = QtWidgets.QWidget()
+        outer.addWidget(self._form_widget)
+
+        lay = QtWidgets.QVBoxLayout(self._form_widget)
         lay.setContentsMargins(40, 40, 40, 40)
         lay.setSpacing(10)
         lay.addStretch(1)
@@ -1313,7 +1423,22 @@ class _SplashPage(QtWidgets.QWidget):
 
     def __init__(self):
         super().__init__()
-        lay = QtWidgets.QVBoxLayout(self)
+        self._was_offline = False
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+
+        self._offline_widget = QtWidgets.QWidget()
+        off_lay = QtWidgets.QVBoxLayout(self._offline_widget)
+        off_lay.setAlignment(QtCore.Qt.AlignCenter)
+        self._sticker, self._no_internet_pix, self._back_online_pix = \
+            _offline_sticker(self._offline_widget)
+        off_lay.addWidget(self._sticker)
+        self._offline_widget.hide()
+        outer.addWidget(self._offline_widget)
+
+        self._signing_widget = QtWidgets.QWidget()
+        outer.addWidget(self._signing_widget)
+        lay = QtWidgets.QVBoxLayout(self._signing_widget)
         lay.setAlignment(QtCore.Qt.AlignCenter)
         lay.setSpacing(16)
 
@@ -1330,6 +1455,29 @@ class _SplashPage(QtWidgets.QWidget):
         msg.setAlignment(QtCore.Qt.AlignCenter)
         msg.setStyleSheet(f"color:{_MUTED}; font-size:12px; letter-spacing:1px;")
         lay.addWidget(msg)
+
+    def set_online(self, online: bool):
+        """Mirrors _LoginPage.set_online — purely visual here, since the
+        actual resume attempt this page stands in for lives on _LoginPage
+        and is gated by the same shared _InternetWatcher independently."""
+        if online:
+            if self._was_offline:
+                self._sticker.setPixmap(self._back_online_pix)
+                self._offline_widget.show()
+                self._signing_widget.hide()
+                QtCore.QTimer.singleShot(2000, self._reveal_signing)
+            else:
+                self._reveal_signing()
+        else:
+            self._was_offline = True
+            self._signing_widget.hide()
+            self._sticker.setPixmap(self._no_internet_pix)
+            self._offline_widget.show()
+
+    def _reveal_signing(self):
+        self._offline_widget.hide()
+        self._signing_widget.show()
+        self._was_offline = False
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1474,6 +1622,16 @@ class LoginWindow(QtWidgets.QDialog):
         # until the resume attempt actually resolves, one way or another.
         if self._session.get("refreshToken"):
             self._stack.setCurrentIndex(4)
+
+        # One connectivity poll shared by both pages, rather than each
+        # running its own — _LoginPage's resume attempt (if there's a saved
+        # session to resume) only fires once this confirms online, and
+        # both pages swap to the same no-internet/back-online sticker in
+        # lockstep since they reflect the same real connection.
+        self._net_watcher = _InternetWatcher(self)
+        self._net_watcher.online_changed.connect(self._login_page.set_online)
+        self._net_watcher.online_changed.connect(self._splash_page.set_online)
+        self._net_watcher.start()
 
         # Wire signals
         self._login_page.login_success.connect(self._on_login_success)
@@ -2076,14 +2234,33 @@ class UpdateDownloadDialog(QtWidgets.QDialog):
     def _on_restart(self):
         if not self._done_path or not os.path.exists(self._done_path):
             return
-        # ShellExecuteW rather than os.startfile(): the installer needs the
-        # /VERYSILENT flags passed as parameters, which startfile has no way
-        # to carry. The "runas" verb is what actually raises the UAC prompt —
-        # the installer's embedded admin manifest alone doesn't trigger it
-        # from a plain CreateProcess.
+        # installer.iss's own postinstall [Run] step is supposed to relaunch
+        # APEX GCS once the silent install finishes, but that didn't happen
+        # in practice (Inno Setup's docs say postinstall entries still run
+        # under /VERYSILENT without skipifsilent — observed behaviour here
+        # disagreed). Rather than keep trusting that, a detached cmd.exe
+        # does it instead: run the installer synchronously (cmd waits for it
+        # by default), then start the app — all independent of this Python
+        # process, which has to exit regardless to release its own exe's
+        # file lock before the installer can overwrite it.
+        #
+        # The extra pair of quotes around the installer path is required
+        # cmd.exe /c syntax when the command itself starts with a quoted
+        # path — without it cmd strips the quotes wrong and the path with
+        # spaces (Program Files) breaks.
+        app_exe = sys.executable
+        cmd_line = (
+            f'/c ""{self._done_path}" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES '
+            f'&& start "" "{app_exe}""'
+        )
+        # ShellExecuteW rather than os.startfile(): needs both the /c
+        # argument string and the "runas" verb, which startfile can't carry.
+        # Elevating cmd.exe itself (rather than the installer directly) means
+        # the installer inherits that elevated token with no second prompt,
+        # and the final "start" call runs elevated too — matching how the
+        # user would launch the app normally either way.
         result = ctypes.windll.shell32.ShellExecuteW(
-            None, "runas", self._done_path,
-            "/VERYSILENT /NORESTART /SUPPRESSMSGBOXES", None, 1)
+            None, "runas", "cmd.exe", cmd_line, None, 0)
         if result <= 32:
             # <= 32 is every ShellExecute failure code, including 5 (the
             # user clicked "No" on the UAC prompt) — nothing was launched.
@@ -2093,9 +2270,6 @@ class UpdateDownloadDialog(QtWidgets.QDialog):
                 informative="The update was not approved or could not start.")
             return
 
-        # The installer's own [Run] step relaunches APEX GCS once it's done,
-        # so this process just needs to get out of the way — anything else
-        # open would hold its files locked against being overwritten.
         parent = self.parent()
         if parent is not None and hasattr(parent, "_prepare_for_restart"):
             parent._prepare_for_restart()
