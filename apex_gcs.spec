@@ -2,11 +2,6 @@
 import os
 import sys
 
-# ── Point PyInstaller to your site-packages explicitly ──
-_site = r"C:\Users\tgvis\AppData\Local\Programs\Python\Python311\Lib\site-packages"
-if _site not in sys.path:
-    sys.path.insert(0, _site)
-
 from PyInstaller.utils.hooks import collect_all
 
 # torch and torchvision are gone: detection runs on onnxruntime, which is
@@ -21,6 +16,8 @@ _np_d,  _np_b,  _np_h  = collect_all('numpy')
 
 added_files = [
     ("images",                      "images"),
+    ("assets",                      "assets"),
+    ("fonts",                       "fonts"),
     # Named individually, not the whole models/ folder: a developer tree also
     # holds the 175 MB .pth that tools/export_onnx.py converts from, and
     # copying the folder shipped it to customers even though the app only ever
@@ -36,7 +33,7 @@ added_files = [
 
 a = Analysis(
     ["main.py"],
-    pathex=[os.path.abspath("."), _site],
+    pathex=[os.path.abspath(".")],
     binaries=_ort_b + _cv_b + _np_b,
     datas=added_files + _ort_d + _cv_d + _np_d,
     hiddenimports=list(set(
@@ -83,6 +80,8 @@ a = Analysis(
             "winreg",
 
             "requests",
+            "packaging",
+            "packaging.version",
 
 
             # ===== Detection dependencies =====
