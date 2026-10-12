@@ -1307,19 +1307,11 @@ class _SignUpPage(QtWidgets.QWidget):
 # authoritative check, since manufacturer/description strings vary by OS
 # and driver version. Matched on either, so a port still shows up if
 # Windows ever reports the VID oddly but keeps the vendor string. Used by
-# both port pickers (initial sign-in and manual reconnect) so only the
-# ground station's actual radio ever shows up, not whatever else is plugged
-# in — a Bluetooth virtual port, another USB-serial gadget, etc.
-_SILABS_VID = 0x10C4
-
-
+# both port pickers (initial sign-in and manual reconnect). Previously
+# filtered to Silicon Labs/CP210x devices only; now lists every available
+# COM port.
 def _silabs_ports():
-    return [
-        p for p in serial.tools.list_ports.comports()
-        if p.vid == _SILABS_VID
-        or "silicon labs" in (p.manufacturer or "").lower()
-        or "cp210" in (p.description or "").lower()
-    ]
+    return list(serial.tools.list_ports.comports())
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3461,6 +3453,118 @@ import threading
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  CompassCalibrationDialog
+# ══════════════════════════════════════════════════════════════════════════════
+class CompassCalibrationDialog(QtWidgets.QDialog):
+    """
+    Walks an operator through the CubeSat's remote magnetometer calibration.
+
+    Opened two ways: unprompted right after connect if the board reports it
+    has never been calibrated (CS_CAL_NONE), or on demand from Settings so a
+    calibration can be redone later (e.g. after a hardware change). Either
+    way it drives the same "M" command and reads the same CS_CAL_* flags —
+    the GroundStation just feeds them into whichever instance is open via
+    on_start / on_progress / on_done.
+    """
+
+    start_requested = QtCore.pyqtSignal()
+
+    def __init__(self, parent=None, already_calibrated: bool = False):
+        super().__init__(parent)
+        self.setWindowTitle("Compass Calibration")
+        self.setModal(False)
+        self.setMinimumWidth(420)
+        self.setStyleSheet(_base_style() + f"""
+            QDialog {{
+                background: {_BG};
+                border: 1px solid {_BORDER};
+                border-radius: {theme.R_CARD}px;
+            }}
+        """)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 18)
+        root.setSpacing(10)
+
+        hdr = QtWidgets.QHBoxLayout()
+        icon = QtWidgets.QLabel()
+        icon.setPixmap(theme.icon("compass", _ACCENT, 22).pixmap(22, 22))
+        hdr.addWidget(icon)
+        title = QtWidgets.QLabel("Compass Calibration")
+        title.setStyleSheet(
+            f"color:{_ACCENT}; font-family:'{theme.DISPLAY}';"
+            f" font-size:{theme.FS_HEAD}px; font-weight:600; margin-left:8px;")
+        hdr.addWidget(title)
+        hdr.addStretch()
+        root.addLayout(hdr)
+
+        self._status = QtWidgets.QLabel()
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        root.addWidget(self._status)
+
+        self._progress = QtWidgets.QProgressBar()
+        self._progress.setRange(0, 30)
+        self._progress.setValue(0)
+        self._progress.setTextVisible(True)
+        self._progress.setVisible(False)
+        root.addWidget(self._progress)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        self._start_btn = QtWidgets.QPushButton("Start Calibration")
+        self._start_btn.setObjectName("primaryBtn")
+        self._start_btn.clicked.connect(self._on_start_clicked)
+        self._close_btn = QtWidgets.QPushButton("Close")
+        self._close_btn.clicked.connect(self.close)
+        btn_row.addWidget(self._start_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(self._close_btn)
+        root.addLayout(btn_row)
+
+        self._set_idle(already_calibrated)
+
+    # ── internal state ──────────────────────────────────────────────────────
+    def _set_idle(self, already_calibrated: bool):
+        if already_calibrated:
+            self._status.setText(
+                "This CubeSat already has a saved compass calibration.\n"
+                "Rotate it through all axes for 30s to redo it.")
+        else:
+            self._status.setText(
+                "This CubeSat has never had its compass calibrated — yaw "
+                "readings may be off. Rotate it through all axes (nose "
+                "up/down, roll, spin flat) for 30s once calibration starts.")
+        self._progress.setVisible(False)
+        self._start_btn.setEnabled(True)
+        self._start_btn.setText("Start Calibration")
+
+    def _on_start_clicked(self):
+        self._start_btn.setEnabled(False)
+        self._status.setText("Waiting for the CubeSat to confirm calibration start…")
+        self.start_requested.emit()
+
+    # ── driven by GroundStation from the CS_CAL_* serial flags ─────────────
+    def on_start(self, duration_s: int):
+        self._progress.setRange(0, max(1, duration_s))
+        self._progress.setValue(0)
+        self._progress.setVisible(True)
+        self._status.setText(
+            f"Calibrating — rotate the satellite through all axes for {duration_s}s.")
+
+    def on_progress(self, elapsed_s: int):
+        self._progress.setValue(elapsed_s)
+
+    def on_done(self, offsets: str):
+        self._progress.setValue(self._progress.maximum())
+        self._status.setText(f"Done — compass calibrated and saved ({offsets}).")
+        self._start_btn.setText("Recalibrate")
+        self._start_btn.setEnabled(True)
+        # Hands the window back after a moment rather than making the
+        # operator close it themselves once the result is already shown.
+        QtCore.QTimer.singleShot(2500, self.close)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  SettingsDialog
 # ══════════════════════════════════════════════════════════════════════════════
 class SettingsDialog(QtWidgets.QDialog):
@@ -3560,6 +3664,16 @@ class SettingsDialog(QtWidgets.QDialog):
 
         root.addLayout(form)
 
+        # ── Compass ──────────────────────────────────────────────────────────
+        root.addSpacing(10)
+        root.addWidget(self._caption("COMPASS"))
+        cal_row = QtWidgets.QHBoxLayout()
+        cal_btn = _icon_btn("Calibrate Compass", "compass")
+        cal_btn.clicked.connect(self._open_calibration)
+        cal_row.addWidget(cal_btn)
+        cal_row.addStretch()
+        root.addLayout(cal_row)
+
         # ── About ────────────────────────────────────────────────────────────
         root.addSpacing(10)
         root.addWidget(self._caption("ABOUT"))
@@ -3617,6 +3731,16 @@ class SettingsDialog(QtWidgets.QDialog):
     def _check_updates(self):
         import core.updater
         core.updater.check_for_updates(self, silent=False)
+
+    def _open_calibration(self):
+        gcs = self.parent()
+        # Settings is modal, so the calibration dialog opening underneath it
+        # was invisible/unreachable until this modal closed on its own.
+        # Closing it first (without saving — that's still Cancel/Save's job)
+        # puts the calibration dialog in front where it's actually usable.
+        self.reject()
+        if gcs is not None and hasattr(gcs, "open_compass_calibration"):
+            gcs.open_compass_calibration()
 
     def _save(self):
         settings.set_("serial/baud", self._baud.currentData())

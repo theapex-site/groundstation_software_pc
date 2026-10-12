@@ -47,7 +47,8 @@ from widgets.right_panel      import RightPanel
 from widgets.graphs           import MiniGraph, GraphPopup
 from widgets.rtg              import RTGWindow
 from widgets.dialogs          import (Toast, PixieBubble, ThemedMessageBox,
-                                     UserProfileDialog, SettingsDialog)
+                                     UserProfileDialog, SettingsDialog,
+                                     CompassCalibrationDialog)
 
 if getattr(sys, 'frozen', False):
     BASE_PATH = sys._MEIPASS
@@ -153,6 +154,10 @@ class GroundStation(QtWidgets.QMainWindow):
         self._last_packet_time = None     # None until the first packet lands
         self._recent_packets   = []       # monotonic stamps, for the rate
         self._last_link_time   = None     # last '@@' link frame
+
+        # ── Compass calibration ─────────────────────────────────────────────
+        self.mag_cal_saved = None   # None = unknown yet, until CS_CAL_* arrives
+        self._cal_dialog    = None
 
         # Commands sent since the last telemetry packet actually came back —
         # a run of these with silence in between usually means the CubeSat
@@ -584,12 +589,50 @@ class GroundStation(QtWidgets.QMainWindow):
                 line = self.serial_port.readline().decode(errors="ignore").strip()
                 if line:
                     print("Received:", line)
+                    # Any line at all — telemetry, a flag, a link frame —
+                    # proves the serial/LoRa link is alive. '@@' frames are
+                    # only sent right after (re)connect, so gating link
+                    # status on those alone meant it froze the moment
+                    # anything else (telemetry, CS_CAL_* progress, etc.)
+                    # started streaming.
+                    self._last_link_time = time.monotonic()
                     if line.startswith("##"):
                         self._parse_packet(line)
                     elif line.startswith("CS_") or line.startswith("GCS_"):
                         self.telemetry.update_flag(line)
                         if line == "CS_READY":
                             self.show_toast("CubeSat is online!", "success")
+                        elif line == "CS_CAL_NONE":
+                            self.mag_cal_saved = False
+                            self.show_toast("Compass has never been calibrated", "warn")
+                            self.open_compass_calibration(auto=True)
+                        elif line == "CS_CAL_SAVED":
+                            self.mag_cal_saved = True
+                        elif line.startswith("CS_CAL_START:"):
+                            duration_s = int(line.split(":", 1)[1])
+                            if self._cal_dialog is not None:
+                                self._cal_dialog.on_start(duration_s)
+                        elif line.startswith("CS_CAL_PROGRESS:"):
+                            elapsed_s = int(line.split(":", 1)[1])
+                            if self._cal_dialog is not None:
+                                self._cal_dialog.on_progress(elapsed_s)
+                        elif line.startswith("CS_CAL_DONE:"):
+                            offsets = line.split(":", 1)[1]
+                            self.mag_cal_saved = True
+                            self.show_toast(f"Compass calibrated and saved ({offsets})", "success")
+                            if self._cal_dialog is not None:
+                                self._cal_dialog.on_done(offsets)
+                        elif line == "CS_GPS_SEARCHING":
+                            self.show_toast("Still acquiring GPS fix — this can take a while cold", "warn")
+                        elif line.startswith("CS_GPS_FIX:"):
+                            ttff_s = line.split(":", 1)[1]
+                            self.show_toast(f"GPS fix acquired ({ttff_s}s to first fix)", "success")
+                        elif line == "CS_GPS_REACQUIRED":
+                            self.show_toast("GPS fix re-acquired", "success")
+                        elif line == "CS_GPS_LOST":
+                            self.show_toast("GPS fix lost", "warn")
+                        elif line == "CS_GPS_FAIL":
+                            self.show_toast("No GPS fix after 5 minutes — check antenna/sky view", "error")
                     elif line.startswith("@@"):
                         self._parse_link_packet(line)
         except serial.SerialException:
@@ -725,7 +768,10 @@ class GroundStation(QtWidgets.QMainWindow):
             except ValueError:
                 pass
 
-            pitch, roll, yaw = float(parts[20]), float(parts[21]), float(parts[22])
+            # Firmware packs these as yaw, pitch, roll (indices 20-22) —
+            # not pitch, roll, yaw. Matching the unpack order to what
+            # MCU_CW_RST.ino actually sends.
+            yaw, pitch, roll = float(parts[20]), float(parts[21]), float(parts[22])
             self.right.cubesat_3d.update_orientation(pitch, roll, yaw)
             self.right.imu_labels["Pitch"].setText(f"{pitch:.2f} °")
             self.right.imu_labels["Roll"].setText(f"{roll:.2f} °")
@@ -1257,7 +1303,11 @@ class GroundStation(QtWidgets.QMainWindow):
         # Link state used to change only when an '@@' frame arrived — but a
         # lost link stops those too, so the chip sat on LINK STABLE while the
         # panel beside it was withdrawing its readings. Silence is the signal.
-        if (self.is_connected and self._last_link_time is not None
+        # Skipped during an image downlink: that read loop owns the serial
+        # port directly and never touches _last_link_time, so the silence
+        # check would otherwise false-trip "signal lost" on every transfer.
+        if (not self.image_mode and self.is_connected
+                and self._last_link_time is not None
                 and now - self._last_link_time > self.LINK_SILENCE_S):
             self.update_link_status(False)
 
@@ -1483,6 +1533,29 @@ class GroundStation(QtWidgets.QMainWindow):
                 tile.update()
         for p in self.graph_popups:
             p.graph.max_points = popup
+
+    def open_compass_calibration(self, auto: bool = False):
+        """
+        Opens (or raises) the compass calibration widget.
+
+        Called unprompted when the CubeSat reports it has never been
+        calibrated (CS_CAL_NONE), and also reachable any time from
+        Settings → Compass so it can be redone later.
+        """
+        if self._cal_dialog is not None:
+            self._cal_dialog.raise_()
+            self._cal_dialog.activateWindow()
+            return
+        dlg = CompassCalibrationDialog(self, already_calibrated=bool(self.mag_cal_saved))
+        dlg.start_requested.connect(lambda: self._send_command("M\n", "Calibrate Compass"))
+        dlg.finished.connect(self._on_calibration_dialog_closed)
+        self._cal_dialog = dlg
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _on_calibration_dialog_closed(self, _result=None):
+        self._cal_dialog = None
 
     def open_settings(self):
         dlg = SettingsDialog(self)
