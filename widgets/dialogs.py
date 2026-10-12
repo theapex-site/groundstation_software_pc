@@ -3453,6 +3453,123 @@ import threading
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  CubesatNameDialog
+# ══════════════════════════════════════════════════════════════════════════════
+class CubesatNameDialog(QtWidgets.QDialog):
+    """
+    Names (or renames) the connected CubeSat.
+
+    Factory-flashed boards have no name — just a fixed, unchangeable APEX ID
+    derived from the chip's MAC. Opened unprompted the first time a nameless
+    board reports in (CS_NAME_EMPTY), and reachable afterward any time from
+    Settings → CubeSat to rename it. Either way it drives the "N:<name>"
+    command and reads the CS_NAME_SET ack back.
+    """
+
+    name_submitted = QtCore.pyqtSignal(str)
+
+    def __init__(self, parent=None, current_name: str = "", apex_id: str = ""):
+        super().__init__(parent)
+        self.setWindowTitle("Name CubeSat")
+        self.setModal(False)
+        self.setMinimumWidth(380)
+        self.setStyleSheet(_base_style() + f"""
+            QDialog {{
+                background: {_BG};
+                border: 1px solid {_BORDER};
+                border-radius: {theme.R_CARD}px;
+            }}
+        """)
+
+        root = QtWidgets.QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 18)
+        root.setSpacing(10)
+
+        hdr = QtWidgets.QHBoxLayout()
+        icon = QtWidgets.QLabel()
+        icon.setPixmap(theme.icon("satellite", _ACCENT, 22).pixmap(22, 22))
+        hdr.addWidget(icon)
+        title = QtWidgets.QLabel("Name CubeSat")
+        title.setStyleSheet(
+            f"color:{_ACCENT}; font-family:'{theme.DISPLAY}';"
+            f" font-size:{theme.FS_HEAD}px; font-weight:600; margin-left:8px;")
+        hdr.addWidget(title)
+        hdr.addStretch()
+        root.addLayout(hdr)
+
+        self._status = QtWidgets.QLabel()
+        self._status.setWordWrap(True)
+        self._status.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        root.addWidget(self._status)
+
+        self._apex_id_label = QtWidgets.QLabel()
+        self._apex_id_label.setStyleSheet(f"color:{_MUTED}; font-size:{theme.FS_MICRO}px;")
+        self._apex_id_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        root.addWidget(self._apex_id_label)
+
+        self._name_edit = QtWidgets.QLineEdit()
+        self._name_edit.setPlaceholderText("e.g. APEX01")
+        self._name_edit.setMaxLength(6)  # firmware rejects anything that isn't exactly 6 chars
+        self._name_edit.setText(current_name)
+        self._name_edit.returnPressed.connect(self._on_save_clicked)
+        self._name_edit.textChanged.connect(self._on_name_text_changed)
+        root.addWidget(self._name_edit)
+
+        self._length_hint = QtWidgets.QLabel()
+        self._length_hint.setStyleSheet(f"color:{_MUTED}; font-size:{theme.FS_MICRO}px;")
+        root.addWidget(self._length_hint)
+
+        btn_row = QtWidgets.QHBoxLayout()
+        self._save_btn = QtWidgets.QPushButton("Save")
+        self._save_btn.setObjectName("primaryBtn")
+        self._save_btn.clicked.connect(self._on_save_clicked)
+        self._close_btn = QtWidgets.QPushButton("Close")
+        self._close_btn.clicked.connect(self.close)
+        btn_row.addWidget(self._save_btn)
+        btn_row.addStretch()
+        btn_row.addWidget(self._close_btn)
+        root.addLayout(btn_row)
+
+        self.set_apex_id(apex_id)
+        self._set_idle(current_name)
+        self._on_name_text_changed(self._name_edit.text())
+
+    # ── internal state ──────────────────────────────────────────────────────
+    def _set_idle(self, current_name: str):
+        if current_name:
+            self._status.setText(f"Currently named \"{current_name}\". Enter a new name to rename it.")
+        else:
+            self._status.setText(
+                "This CubeSat has no name yet — it won't appear in telemetry "
+                "until one is set. The APEX ID below never changes, even after renaming.")
+        self._save_btn.setText("Save")
+
+    def set_apex_id(self, apex_id: str):
+        self._apex_id_label.setText(f"APEX ID: {apex_id}" if apex_id else "APEX ID: —")
+
+    def _on_name_text_changed(self, text: str):
+        n = len(text.strip())
+        self._length_hint.setText(f"{n}/6 characters" + ("" if n == 6 else " — must be exactly 6"))
+        self._save_btn.setEnabled(n == 6)
+
+    def _on_save_clicked(self):
+        name = self._name_edit.text().strip()
+        if len(name) != 6:
+            return
+        self._save_btn.setEnabled(False)
+        self._status.setText("Waiting for the CubeSat to confirm the new name…")
+        self.name_submitted.emit(name)
+
+    # ── driven by GroundStation from the CS_NAME_SET flag ──────────────────
+    def on_name_set(self, name: str, apex_id: str):
+        self.set_apex_id(apex_id)
+        self._status.setText(f"Done — now named \"{name}\".")
+        self._save_btn.setEnabled(True)
+        self._save_btn.setText("Save")
+        QtCore.QTimer.singleShot(2000, self.close)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  CompassCalibrationDialog
 # ══════════════════════════════════════════════════════════════════════════════
 class CompassCalibrationDialog(QtWidgets.QDialog):
@@ -3664,6 +3781,26 @@ class SettingsDialog(QtWidgets.QDialog):
 
         root.addLayout(form)
 
+        # ── CubeSat ──────────────────────────────────────────────────────────
+        root.addSpacing(10)
+        root.addWidget(self._caption("CUBESAT"))
+        gcs = self.parent()
+        name = getattr(gcs, "cubesat_name", None) or "(not named yet)"
+        apex_id = getattr(gcs, "apex_id", None) or "—"
+        self._cubesat_name_label = QtWidgets.QLabel(f"Name: {name}")
+        self._cubesat_name_label.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        root.addWidget(self._cubesat_name_label)
+        apex_id_label = QtWidgets.QLabel(f"APEX ID: {apex_id}")
+        apex_id_label.setStyleSheet(f"color:{_MUTED}; font-size:{theme.FS_MICRO}px;")
+        apex_id_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
+        root.addWidget(apex_id_label)
+        name_row = QtWidgets.QHBoxLayout()
+        name_btn = _icon_btn("Rename CubeSat", "satellite")
+        name_btn.clicked.connect(self._open_name_dialog)
+        name_row.addWidget(name_btn)
+        name_row.addStretch()
+        root.addLayout(name_row)
+
         # ── Compass ──────────────────────────────────────────────────────────
         root.addSpacing(10)
         root.addWidget(self._caption("COMPASS"))
@@ -3741,6 +3878,14 @@ class SettingsDialog(QtWidgets.QDialog):
         self.reject()
         if gcs is not None and hasattr(gcs, "open_compass_calibration"):
             gcs.open_compass_calibration()
+
+    def _open_name_dialog(self):
+        gcs = self.parent()
+        # Same reasoning as _open_calibration — this modal has to get out
+        # of the way first or the name dialog opens invisibly behind it.
+        self.reject()
+        if gcs is not None and hasattr(gcs, "open_cubesat_name_dialog"):
+            gcs.open_cubesat_name_dialog()
 
     def _save(self):
         settings.set_("serial/baud", self._baud.currentData())

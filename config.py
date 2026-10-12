@@ -9,7 +9,7 @@ Colours, fonts, radii and the stylesheet live in theme.py.
 import os
 import sys
 
-APP_VERSION = "1.2.5"
+APP_VERSION = "1.2.6"
 GITHUB_REPO = "theapex-site/groundstation_software_pc"
 
 def resource_path(relative_path):

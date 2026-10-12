@@ -184,11 +184,9 @@ class TelemetryPanel(QtWidgets.QFrame):
 
         # ── VITALS ────────────────────────────────────────────────────────────
         vitals = group("VITALS", "heart")
-        self.alt   = add_row(vitals.layout(), 0, "Altitude",    "m",   "Height above sea level.")
-        self.speed = add_row(vitals.layout(), 1, "Speed",       "m/s", "Current velocity of the CubeSat.")
-        self.temp  = add_row(vitals.layout(), 2, "Temperature", "°C",  "Measured onboard temperature.")
-        self.press = add_row(vitals.layout(), 3, "Pressure",    "hPa", "Atmospheric pressure measurement.")
-        self.hum   = add_row(vitals.layout(), 4, "Humidity",    "%",   "Relative humidity level.")
+        self.alt       = add_row(vitals.layout(), 0, "Altitude",  "m",   "Height above sea level.")
+        self.speed     = add_row(vitals.layout(), 1, "Speed",     "m/s", "Current velocity of the CubeSat.")
+        self.core_temp = add_row(vitals.layout(), 2, "Core Temp", "°C",  "ESP32-S3 onboard chip temperature — what the overheat alert is based on.")
         content_lay.addWidget(vitals)
 
         # ── AIR QUALITY ───────────────────────────────────────────────────────
@@ -196,6 +194,9 @@ class TelemetryPanel(QtWidgets.QFrame):
         self.iaq  = add_row(air.layout(), 0, "AQI Index",  "",    "Indoor Air Quality index.")
         self.eco2 = add_row(air.layout(), 1, "eCO2",       "ppm", "Estimated equivalent CO2 concentration.")
         self.voc  = add_row(air.layout(), 2, "VOC Index",  "",    "Volatile Organic Compound level.")
+        self.temp  = add_row(air.layout(), 3, "Temperature", "°C",  "Measured ambient (BME680) temperature.")
+        self.press = add_row(air.layout(), 4, "Pressure",    "hPa", "Atmospheric pressure measurement.")
+        self.hum   = add_row(air.layout(), 5, "Humidity",    "%",   "Relative humidity level.")
         content_lay.addWidget(air)
 
         # ── FLAG MONITOR ──────────────────────────────────────────────────────
@@ -342,7 +343,7 @@ class TelemetryPanel(QtWidgets.QFrame):
         batt_v, batt_soc, solar_v, current, power_val,
         sats, lat, lon, hdop,
         alt, speed, temp, press, hum,
-        gas_res,
+        gas_res, core_temp,
     ):
         # A packet has arrived, so drop any stale treatment before the new
         # readings are written; set_data_age() keeps it that way.
@@ -377,6 +378,12 @@ class TelemetryPanel(QtWidgets.QFrame):
         # Vitals
         self.alt.setText(str(alt))
         self.speed.setText(str(speed))
+        self.core_temp.setText(str(core_temp))
+        # Same 60°C line the firmware's CS_TEMP_ALERT now fires at (die
+        # temp, not ambient) — alarm here lines up with the real alert.
+        self._color(self.core_temp, float(core_temp), 0, 45, 45, 60)
+
+        # Air quality card also carries the raw ambient readings now
         self.temp.setText(str(temp))
         self._color(self.temp,  float(temp),  0, 45, 45, 60)
         self.press.setText(str(press))

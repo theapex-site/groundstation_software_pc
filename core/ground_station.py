@@ -48,7 +48,7 @@ from widgets.graphs           import MiniGraph, GraphPopup
 from widgets.rtg              import RTGWindow
 from widgets.dialogs          import (Toast, PixieBubble, ThemedMessageBox,
                                      UserProfileDialog, SettingsDialog,
-                                     CompassCalibrationDialog)
+                                     CompassCalibrationDialog, CubesatNameDialog)
 
 if getattr(sys, 'frozen', False):
     BASE_PATH = sys._MEIPASS
@@ -158,6 +158,11 @@ class GroundStation(QtWidgets.QMainWindow):
         # ── Compass calibration ─────────────────────────────────────────────
         self.mag_cal_saved = None   # None = unknown yet, until CS_CAL_* arrives
         self._cal_dialog    = None
+
+        # ── CubeSat identity ─────────────────────────────────────────────────
+        self.cubesat_name = None   # None until CS_NAME_EMPTY/CS_NAME_SET arrives
+        self.apex_id      = None   # fixed hardware ID (MAC-derived), from CS_APEX_ID
+        self._name_dialog  = None
 
         # Commands sent since the last telemetry packet actually came back —
         # a run of these with silence in between usually means the CubeSat
@@ -483,7 +488,7 @@ class GroundStation(QtWidgets.QMainWindow):
             "Battery Voltage","Battery SOC","Solar Voltage","Current","Power",
             "Satellites","Latitude","Longitude","HDOP",
             "Altitude","Speed","Temperature","Pressure","Humidity",
-            "Yaw","Pitch","Roll","Gas Resistance",
+            "Yaw","Pitch","Roll","Gas Resistance","Core Temp",
         ])
         self._ws_flag = self._wb.create_sheet("Flags")
         self._ws_flag.append(["Timestamp", "Flag"])
@@ -511,7 +516,7 @@ class GroundStation(QtWidgets.QMainWindow):
                 parts[6],  parts[7],  parts[8],  parts[9],  parts[10],
                 parts[11], parts[12], parts[13], parts[14],
                 parts[15], parts[16], parts[17], parts[18], parts[19],
-                parts[22], parts[20], parts[21], parts[23],
+                parts[22], parts[20], parts[21], parts[23], parts[24],
             ])
             self._telemetry_row_count += 1
             self._wb.save(self.temp_path)
@@ -602,6 +607,12 @@ class GroundStation(QtWidgets.QMainWindow):
                         self.telemetry.update_flag(line)
                         if line == "CS_READY":
                             self.show_toast("CubeSat is online!", "success")
+                            # The firmware only volunteers its APEX ID
+                            # alongside a name event (CS_NAME_EMPTY/SET),
+                            # so an already-named board reconnecting needs
+                            # to be asked for it explicitly here.
+                            if self.apex_id is None:
+                                self._send_command("I\n", "Request APEX ID")
                         elif line == "CS_CAL_NONE":
                             self.mag_cal_saved = False
                             self.show_toast("Compass has never been calibrated", "warn")
@@ -633,6 +644,32 @@ class GroundStation(QtWidgets.QMainWindow):
                             self.show_toast("GPS fix lost", "warn")
                         elif line == "CS_GPS_FAIL":
                             self.show_toast("No GPS fix after 5 minutes — check antenna/sky view", "error")
+                        elif line == "CS_TEMP_ALERT":
+                            self.show_toast("Core temp alert — above 60°C", "warn")
+                        elif line == "CS_TEMP_RISK":
+                            self.show_toast("Core temp RISK — above 75°C", "error")
+                        elif line == "CS_FACTORY_RESET":
+                            # APEX ID is MAC-derived, not stored — it
+                            # survives this. Everything else the board
+                            # just wiped does not, so drop the cached
+                            # copies rather than show stale state until
+                            # the reboot's CS_NAME_EMPTY/CS_CAL_NONE land.
+                            self.cubesat_name = None
+                            self.mag_cal_saved = None
+                            self.show_toast("CubeSat factory reset — rebooting", "warn")
+                        elif line.startswith("CS_APEX_ID:"):
+                            self.apex_id = line.split(":", 1)[1]
+                        elif line.startswith("CS_NAME_EMPTY:"):
+                            self.apex_id = line.split(":", 1)[1]
+                            self.show_toast("This CubeSat hasn't been named yet", "warn")
+                            self.open_cubesat_name_dialog(auto=True)
+                        elif line.startswith("CS_NAME_SET:"):
+                            _, name, apex_id = line.split(":", 2)
+                            self.cubesat_name = name
+                            self.apex_id = apex_id
+                            self.show_toast(f"CubeSat named \"{name}\"", "success")
+                            if self._name_dialog is not None:
+                                self._name_dialog.on_name_set(name, apex_id)
                     elif line.startswith("@@"):
                         self._parse_link_packet(line)
         except serial.SerialException:
@@ -757,7 +794,7 @@ class GroundStation(QtWidgets.QMainWindow):
                 sats=parts[11],       lat=parts[12],     lon=parts[13],
                 hdop=parts[14],       alt=parts[15],     speed=parts[16],
                 temp=parts[17],       press=parts[18],   hum=parts[19],
-                gas_res=parts[23],
+                gas_res=parts[23],    core_temp=parts[24],
             )
 
             try:
@@ -1556,6 +1593,33 @@ class GroundStation(QtWidgets.QMainWindow):
 
     def _on_calibration_dialog_closed(self, _result=None):
         self._cal_dialog = None
+
+    def open_cubesat_name_dialog(self, auto: bool = False):
+        """
+        Opens (or raises) the CubeSat naming widget.
+
+        Called unprompted when a factory-fresh board reports it has no
+        name (CS_NAME_EMPTY — repeated every ~5s by the firmware until a
+        name is set, so this must stay idempotent rather than stacking a
+        new popup each time), and also reachable any time from
+        Settings → CubeSat to rename it later.
+        """
+        if self._name_dialog is not None:
+            self._name_dialog.set_apex_id(self.apex_id or "")
+            self._name_dialog.raise_()
+            self._name_dialog.activateWindow()
+            return
+        dlg = CubesatNameDialog(self, current_name=self.cubesat_name or "",
+                                apex_id=self.apex_id or "")
+        dlg.name_submitted.connect(lambda n: self._send_command(f"N:{n}\n", "Set CubeSat Name"))
+        dlg.finished.connect(self._on_name_dialog_closed)
+        self._name_dialog = dlg
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
+    def _on_name_dialog_closed(self, _result=None):
+        self._name_dialog = None
 
     def open_settings(self):
         dlg = SettingsDialog(self)

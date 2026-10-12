@@ -31,7 +31,7 @@ SAMPLE = dict(
     power_val="2.14",
     sats="11", lat="13.017812", lon="77.514813", hdop="0.9",
     alt="412", speed="1.8", temp="47.2", press="1013", hum="41",
-    gas_res="320000",
+    gas_res="320000", core_temp="52.3",
 )
 
 
