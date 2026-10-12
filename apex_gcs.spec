@@ -47,6 +47,19 @@
 #                                collapsing with nothing shown; fixed a
 #                                QtWebEngineWidgets import-order crash
 #                                from building GroundStation lazily.
+#   v1.2.5  9bd8ac7  2026-10-12  Link status no longer false-"Signal Lost"
+#                                during normal telemetry or an image
+#                                downlink (was only ever refreshed by '@@'
+#                                frames, which the firmware sends once at
+#                                connect and not again); fixed CubeSat
+#                                orientation fields being unpacked in the
+#                                wrong order (yaw/pitch/roll were rotated
+#                                one slot); new Compass Calibration dialog,
+#                                auto-opened on first connect if the board
+#                                has never been calibrated, reachable any
+#                                time after from Settings; COM port picker
+#                                no longer filters to Silicon Labs/CP210x
+#                                devices only.
 # ─────────────────────────────────────────────────────────────────────────
 import os
 import sys
