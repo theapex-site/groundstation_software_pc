@@ -60,6 +60,16 @@
 #                                time after from Settings; COM port picker
 #                                no longer filters to Silicon Labs/CP210x
 #                                devices only.
+#   v1.2.6  0fb03dc  2026-10-13  New CubeSat Naming dialog (strictly 6
+#                                characters, matching the firmware), with
+#                                Settings now showing the fixed hardware
+#                                APEX ID alongside it; added Core Temp to
+#                                Vitals telemetry with a two-tier (ALERT/
+#                                RISK) overheat alert; ambient Temperature/
+#                                Pressure/Humidity moved from Vitals to
+#                                Air Quality; new toasts for GPS re-
+#                                acquire/lost, both temp tiers, and a
+#                                factory-reset notification.
 # ─────────────────────────────────────────────────────────────────────────
 import os
 import sys
