@@ -70,6 +70,23 @@
 #                                Air Quality; new toasts for GPS re-
 #                                acquire/lost, both temp tiers, and a
 #                                factory-reset notification.
+#   v1.2.7  e2c714a  2026-10-14  Per-Monitor-V2 DPI awareness, fixing the
+#                                UI rendering bitmap-stretched (overlapping/
+#                                cut-off widgets) on a monitor other than
+#                                the one it was designed against; new
+#                                textured CubeSat model, capped so it can't
+#                                crowd out the Control Panel on a tall
+#                                screen; app bar hides low-priority stat
+#                                chips under width pressure instead of
+#                                overlapping the RTG button; GroundStation
+#                                sizes off the monitor under the cursor and
+#                                always launches maximized; image-downlink
+#                                receiver no longer dies silently on an
+#                                unexpected exception; in-app updater no
+#                                longer races the installer's own postinstall
+#                                relaunch or starts it before this process's
+#                                file handles are released; scrollbar
+#                                handles are now visible at rest.
 # ─────────────────────────────────────────────────────────────────────────
 import os
 import sys
