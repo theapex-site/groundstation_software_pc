@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+app.manifest
+────────────
+Declares APEX_GCS.exe as Per-Monitor-V2 DPI aware.
+
+Without this, Windows has no idea the process handles its own DPI scaling
+(even though main.py sets Qt's AA_EnableHighDpiScaling/AA_UseHighDpiPixmaps),
+so it falls back to DPI virtualization: it renders the window once at an
+assumed DPI, then bitmap-stretches that image to whatever the actual
+monitor needs. That's why the app looked right on the laptop panel but
+came out stretched, with overlapping/cut-off widgets, on an external
+monitor running a different scale factor — the layout itself was never
+wrong, Windows was just scaling a screenshot of it.
+
+dpiAwareness (the 2016 tag) is what Windows 10 1703+ reads; dpiAware (the
+older 2005 tag, "true/pm") is the Per-Monitor-V1 fallback for anything
+earlier. Both are included because an unrecognised tag is ignored, not an
+error — there is no downside to carrying both.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+      <!-- Windows 8.1 -->
+      <supportedOS Id="{1f676c76-80e1-4239-95bb-83d0f6d0da78}"/>
+    </application>
+  </compatibility>
+  <application xmlns="urn:schemas-microsoft-com:asm.v3">
+    <windowsSettings>
+      <dpiAwareness xmlns="http://schemas.microsoft.com/SMI/2016/WindowsSettings">PerMonitorV2</dpiAwareness>
+      <dpiAware xmlns="http://schemas.microsoft.com/SMI/2005/WindowsSettings">true/pm</dpiAware>
+      <gdiScaling xmlns="http://schemas.microsoft.com/SMI/2017/WindowsSettings">true</gdiScaling>
+    </windowsSettings>
+  </application>
+</assembly>

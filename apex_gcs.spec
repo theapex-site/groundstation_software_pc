@@ -95,7 +95,7 @@ added_files = [
     # copying the folder shipped it to customers even though the app only ever
     # loads the .onnx.
     ("models/fasterrcnn_resnet50_fpn_v2_coco.onnx", "models"),
-    ("models/space_club_cubesat.glb",               "models"),
+    ("models/APEX_CubeSat.glb",                      "models"),
     # Silicon Labs CP210x driver, so a customer with no internet on the bench
     # is not stuck hunting for it. Unmodified package, catalog included: the
     # .cat signs a hash of silabser.inf, so editing the INF would invalidate
@@ -170,7 +170,11 @@ a = Analysis(
         "tensorflow",
         "keras",
         "sklearn",
-        "scipy",
+        # scipy is NOT excluded: trimesh needs it (sparse matrices in
+        # geometry.weighted_vertex_normals) to compute the CubeSat model's
+        # vertex normals efficiently. Without it trimesh silently falls
+        # back to a dense path that is minutes slower on a model this size
+        # — see widgets/right_panel.py's CubeSat3D.
         "torch",
         "torchvision",
         # Swept in from site-packages, not imported anywhere in the app:
@@ -212,6 +216,13 @@ exe = EXE(
     upx=True,
     console=True,
     icon="icon.ico",
+    # Per-Monitor-V2 DPI awareness. Without it Windows doesn't know this
+    # process handles its own DPI scaling, so it bitmap-stretches the
+    # window to fit whatever monitor it's on instead of letting Qt's own
+    # AA_EnableHighDpiScaling render natively at the right size — that
+    # stretch is what made the UI look fine on one screen and overlapping/
+    # cut off on another.
+    manifest="app.manifest",
 )
 
 coll = COLLECT(

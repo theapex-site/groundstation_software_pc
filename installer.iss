@@ -2,7 +2,7 @@
 
 [Setup]
 AppName=APEX Ground Control Station
-AppVersion=1.2.6
+AppVersion=1.2.7
 AppPublisher=APEX
 DefaultDirName={autopf}\APEX GCS
 DefaultGroupName=APEX GCS
@@ -32,8 +32,10 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 [Run]
 Filename: "{tmp}\vc_redist.x64.exe"; Parameters: "/install /quiet /norestart"; StatusMsg: "Installing Visual C++ Runtime..."; Flags: waituntilterminated
 Filename: "pnputil"; Parameters: "/add-driver ""{app}\drivers\cp210x\silabser.inf"" /install"; StatusMsg: "Installing CP210x USB driver..."; Flags: runhidden waituntilterminated
-; No skipifsilent: the in-app updater runs this installer with /VERYSILENT,
-; and that silent run still needs to relaunch the app once it's done — a
-; manual double-click install still shows this as the usual Finish-page
-; "Launch APEX GCS" checkbox either way.
-Filename: "{app}\APEX_GCS.exe"; Description: "Launch APEX GCS"; Flags: nowait postinstall
+; skipifsilent: the in-app updater (widgets/dialogs.py's UpdateDownloadDialog
+; _on_restart) runs this installer with /VERYSILENT and separately shell-starts
+; APEX_GCS.exe itself once the installer process exits. Without skipifsilent
+; both this entry and that explicit start fired, launching two copies of the
+; app after every in-app update. A manual double-click install is never
+; silent, so the Finish-page "Launch APEX GCS" checkbox still works there.
+Filename: "{app}\APEX_GCS.exe"; Description: "Launch APEX GCS"; Flags: nowait postinstall skipifsilent

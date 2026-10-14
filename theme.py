@@ -809,16 +809,23 @@ QCheckBox::indicator:checked {{
 }}
 
 /* ── Scrollbars ─────────────────────────────────────────────────────────── */
+/* The handle used to rest at {LINE} — the border colour, chosen to blend
+   in everywhere else — which on a near-black background made a scrollbar
+   that works perfectly invisible until the cursor happened to find it.
+   A panel that needed scrolling to reach its own Control Panel buttons
+   then just looked like it was missing them. {DIM} at rest, same as the
+   stale-data tone, is still quiet but enough to register as "there's a
+   handle here" at a glance; hover brightens to {SLATE} for feedback. */
 QScrollBar:vertical {{ background: transparent; width: 9px; margin: 0; }}
 QScrollBar::handle:vertical {{
-    background: {LINE}; border-radius: 4px; min-height: 28px;
+    background: {DIM}; border-radius: 4px; min-height: 28px;
 }}
-QScrollBar::handle:vertical:hover {{ background: {DIM}; }}
+QScrollBar::handle:vertical:hover {{ background: {SLATE}; }}
 QScrollBar:horizontal {{ background: transparent; height: 9px; margin: 0; }}
 QScrollBar::handle:horizontal {{
-    background: {LINE}; border-radius: 4px; min-width: 28px;
+    background: {DIM}; border-radius: 4px; min-width: 28px;
 }}
-QScrollBar::handle:horizontal:hover {{ background: {DIM}; }}
+QScrollBar::handle:horizontal:hover {{ background: {SLATE}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: none; }}
 

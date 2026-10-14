@@ -2496,15 +2496,25 @@ class UpdateDownloadDialog(QtWidgets.QDialog):
     def _on_restart(self):
         if not self._done_path or not os.path.exists(self._done_path):
             return
-        # installer.iss's own postinstall [Run] step is supposed to relaunch
-        # APEX GCS once the silent install finishes, but that didn't happen
-        # in practice (Inno Setup's docs say postinstall entries still run
-        # under /VERYSILENT without skipifsilent — observed behaviour here
-        # disagreed). Rather than keep trusting that, a detached cmd.exe
-        # does it instead: run the installer synchronously (cmd waits for it
-        # by default), then start the app — all independent of this Python
-        # process, which has to exit regardless to release its own exe's
-        # file lock before the installer can overwrite it.
+        # installer.iss's own postinstall [Run] step now carries
+        # skipifsilent, so it no longer races this explicit relaunch during
+        # an in-app (/VERYSILENT) update — see the comment there. This
+        # detached cmd.exe is the sole relauncher for that path: run the
+        # installer synchronously (cmd waits for it by default), then start
+        # the app — all independent of this Python process, which has to
+        # exit regardless to release its own exe's file lock before the
+        # installer can overwrite it.
+        #
+        # A logged failure (K:\...\APEX_GCS_install.log, 2026-10-13) caught
+        # the actual race: the installer reached a numpy .pyd still held
+        # open by this process ("Access is denied", 4 retries over 4s) and
+        # silently rolled back the whole install under /SUPPRESSMSGBOXES —
+        # nothing updated, no error shown, just what looked like the button
+        # doing nothing. ShellExecuteW returns as soon as UAC is approved,
+        # which can be well before the 200ms exit timer below actually runs
+        # os._exit(0) — the installer was starting to copy files while this
+        # process still had them open. The ping is cmd's only built-in
+        # sleep; it pads that gap so file handles are released first.
         #
         # The extra pair of quotes around the installer path is required
         # cmd.exe /c syntax when the command itself starts with a quoted
@@ -2523,7 +2533,8 @@ class UpdateDownloadDialog(QtWidgets.QDialog):
         # /LOG gives something to actually look at next time this happens,
         # since /SUPPRESSMSGBOXES means no dialog ever shows the failure.
         cmd_line = (
-            f'/c ""{self._done_path}" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES '
+            f'/c ping -n 4 127.0.0.1 >nul '
+            f'& ""{self._done_path}" /VERYSILENT /NORESTART /SUPPRESSMSGBOXES '
             f'/LOG="{log_path}" '
             f'& start "" "{app_exe}""'
         )

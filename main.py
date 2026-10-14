@@ -17,6 +17,43 @@ os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["PYTORCH_JIT"] = "0"
 
+# Per-Monitor-V2 DPI awareness for the dev run (`python main.py`). The
+# frozen .exe gets this from app.manifest instead (see apex_gcs.spec) — a
+# manifest baked into the binary is what Windows actually trusts; this is
+# only here because python.exe/pythonw.exe carry no such manifest, so
+# without this call Windows silently falls back to DPI virtualization
+# (bitmap-stretching the window to fit the monitor) for a plain dev run,
+# which is the same stretch bug the manifest fixes for the shipped build.
+# Must run before any window handle exists, so before the PyQt5 import.
+if sys.platform == "win32":
+    import ctypes
+    try:
+        # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2, Windows 10 1703+.
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except (AttributeError, OSError):
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PER_MONITOR_DPI_AWARE
+        except (AttributeError, OSError):
+            try:
+                ctypes.windll.user32.SetProcessDPIAware()
+            except (AttributeError, OSError):
+                pass
+
+# Raw bytes off a serial link get print()ed verbatim all over this app
+# (boot banners, noise, anything that arrived where text was expected),
+# and Windows' default console codepage (cp1252) can't encode a lot of
+# valid Unicode — one stray character used to crash whatever thread was
+# printing it with UnicodeEncodeError. The image-downlink receiver runs
+# on a daemon thread with nothing else watching it, so that crash killed
+# the transfer invisibly and left the app stuck in image mode forever.
+# errors="replace" is what matters here; utf-8 is just the easiest
+# encoding to ask Python to swap in for a case this is sidestepping.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Pre-load the detection runtime BEFORE any PyQt5 import.
 #
 # This was torch, for a c10.dll conflict. onnxruntime has the same problem:

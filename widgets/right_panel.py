@@ -17,7 +17,9 @@ import sys
 import time
 from datetime import datetime
 
+import numpy as np
 import trimesh
+from PIL import Image as PILImage
 from PyQt5 import QtWidgets, QtCore, QtGui
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtOpenGL import QGLWidget
@@ -107,17 +109,66 @@ class CubeSat3D(QGLWidget):
         super().__init__()
         self.pitch = self.roll = self.yaw = 0.0
 
-        model_path = os.path.join(BASE_PATH, "models", "space_club_cubesat.glb")
+        model_path = os.path.join(BASE_PATH, "models", "APEX_CubeSat.glb")
         model = trimesh.load(model_path)
 
-        self.meshes = list(model.geometry.values()) if isinstance(model, trimesh.Scene) else [model]
+        # scene.geometry.values() hands back each part in its own local mesh
+        # space, ignoring the scene graph's per-node transforms. dump()
+        # bakes those in, which is required here: the body, solar panels,
+        # antenna and the two textured decals (logo plate, solar sheen) are
+        # separate parts placed by those transforms, each with its own
+        # material — they are kept separate rather than concatenated so the
+        # textured ones can be drawn with their own image bound and the
+        # untextured ones with their own flat material colour.
+        raw_parts = model.dump() if isinstance(model, trimesh.Scene) else [model]
 
-        for mesh in self.meshes:
-            if hasattr(mesh.visual, "to_color"):
-                mesh.visual = mesh.visual.to_color()
-            mesh.vertices -= mesh.center_mass
-            scale = 1.3 / max(mesh.extents)
-            mesh.vertices *= scale
+        # One centre/scale for the whole assembly, not per part — a part as
+        # small as the antenna would otherwise be blown up to fill the same
+        # 1.3-unit box on its own instead of sitting at its true relative
+        # size and position.
+        all_bounds = np.array([p.bounds for p in raw_parts])
+        center = np.vstack([all_bounds[:, 0, :].min(axis=0),
+                             all_bounds[:, 1, :].max(axis=0)]).mean(axis=0)
+        extents = all_bounds[:, 1, :].max(axis=0) - all_bounds[:, 0, :].min(axis=0)
+        scale = 1.3 / max(extents)
+
+        # Each entry: vertex/normal/index arrays for glDrawElements, plus
+        # either a texture (uv + PIL image, resolved to a GL texture id in
+        # initializeGL, which is the first point a GL context is current)
+        # or a flat material colour for parts with no image.
+        #
+        # Not a single per-vertex Python loop over all this, nor trimesh
+        # properties read live inside one (mesh.vertices[v],
+        # mesh.face_normals[i]) — that was the old approach, and at a face
+        # count in the tens of thousands (vs. a few hundred on the model
+        # this replaced) it took minutes per frame instead of milliseconds.
+        self._parts = []
+        for p in raw_parts:
+            verts = (p.vertices - center) * scale
+            part = {
+                "vertices": np.ascontiguousarray(verts, dtype=np.float32),
+                "normals":  np.ascontiguousarray(p.vertex_normals, dtype=np.float32),
+                "indices":  np.ascontiguousarray(p.faces, dtype=np.uint32).reshape(-1),
+                "uv": None,
+                "image": None,
+                "texture_id": None,
+                "color": (0.8, 0.8, 0.8),
+            }
+            material = getattr(p.visual, "material", None)
+            if material is not None:
+                base = getattr(material, "baseColorFactor", None)
+                if base is not None:
+                    part["color"] = tuple(float(c) / 255.0 for c in base[:3])
+                image = getattr(material, "baseColorTexture", None)
+                uv = getattr(p.visual, "uv", None)
+                if image is not None and uv is not None:
+                    # glTF UV origin is the image's top-left corner;
+                    # OpenGL's texture sampling origin is bottom-left, so
+                    # the image is flipped once here rather than flipping V
+                    # per-vertex on every draw.
+                    part["image"] = image.convert("RGB").transpose(PILImage.FLIP_TOP_BOTTOM)
+                    part["uv"] = np.ascontiguousarray(uv, dtype=np.float32)
+            self._parts.append(part)
 
     def update_orientation(self, pitch: float, roll: float, yaw: float):
         self.pitch, self.roll, self.yaw = pitch, roll, yaw
@@ -149,7 +200,24 @@ class CubeSat3D(QGLWidget):
         glShadeModel(GL_SMOOTH)
         glLightfv(GL_LIGHT0, GL_POSITION, [5, 5, 5, 1])
         glLightfv(GL_LIGHT0, GL_DIFFUSE,  [1, 1, 1, 1])
-        glEnable(GL_TEXTURE_2D)
+
+        # Texture upload needs a current GL context, which only exists from
+        # here on — __init__ just collected the decoded PIL images. The
+        # image itself is dropped once uploaded; only the GL texture id is
+        # needed to draw.
+        for part in self._parts:
+            image = part.pop("image")
+            if image is None:
+                continue
+            tex_id = glGenTextures(1)
+            glBindTexture(GL_TEXTURE_2D, tex_id)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image.width, image.height,
+                         0, GL_RGB, GL_UNSIGNED_BYTE, image.tobytes())
+            part["texture_id"] = tex_id
 
     def resizeGL(self, w, h):
         glViewport(0, 0, w, h)
@@ -177,21 +245,34 @@ class CubeSat3D(QGLWidget):
         glEnd()
 
     def _draw_model(self):
-        glBegin(GL_TRIANGLES)
-        for mesh in self.meshes:
-            colors = mesh.visual.vertex_colors if hasattr(mesh.visual, "vertex_colors") else None
-            for i, face in enumerate(mesh.faces):
-                n = mesh.face_normals[i]
-                glNormal3f(n[0], n[1], n[2])
-                for v in face:
-                    if colors is not None:
-                        c = colors[v] / 255.0
-                        glColor3f(c[0], c[1], c[2])
-                    else:
-                        glColor3f(0.8, 0.8, 0.8)
-                    vert = mesh.vertices[v]
-                    glVertex3f(vert[0], vert[1], vert[2])
-        glEnd()
+        # Vertex arrays per part, not a per-vertex glBegin/glVertex3f Python
+        # loop: see the note in __init__ — at this model's face count the
+        # old loop's per-element property access took over a second per
+        # frame. Each part is drawn separately since they carry different
+        # materials: the two with an actual texture (logo plate, solar
+        # panel sheen) are drawn textured and white so the image shows at
+        # full brightness under scene lighting; the rest have no image, so
+        # they draw as a flat GL_COLOR_MATERIAL colour from the glTF
+        # material instead.
+        glEnableClientState(GL_VERTEX_ARRAY)
+        glEnableClientState(GL_NORMAL_ARRAY)
+        for part in self._parts:
+            glVertexPointer(3, GL_FLOAT, 0, part["vertices"])
+            glNormalPointer(GL_FLOAT, 0, part["normals"])
+            if part["texture_id"] is not None:
+                glEnable(GL_TEXTURE_2D)
+                glBindTexture(GL_TEXTURE_2D, part["texture_id"])
+                glColor3f(1.0, 1.0, 1.0)
+                glEnableClientState(GL_TEXTURE_COORD_ARRAY)
+                glTexCoordPointer(2, GL_FLOAT, 0, part["uv"])
+            else:
+                glDisable(GL_TEXTURE_2D)
+                glColor3f(*part["color"])
+            glDrawElements(GL_TRIANGLES, len(part["indices"]), GL_UNSIGNED_INT, part["indices"])
+            if part["texture_id"] is not None:
+                glDisableClientState(GL_TEXTURE_COORD_ARRAY)
+        glDisableClientState(GL_VERTEX_ARRAY)
+        glDisableClientState(GL_NORMAL_ARRAY)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -246,7 +327,19 @@ class RightPanel(QtWidgets.QFrame):
         self.cubesat_3d = CubeSat3D()
         # Taller now that the gas card below it is gone — the model was
         # letterboxed into 170px while a one-row card sat underneath.
-        self.cubesat_3d.setMinimumHeight(260)
+        #
+        # No maximum originally: inside a setWidgetResizable(True) scroll
+        # area, an Expanding child doesn't just grow to fill its own card —
+        # it grows to soak up however much taller the viewport is than the
+        # rest of the content needs, which scales with the screen. On a
+        # tall enough window that pushed the Control Panel's buttons below
+        # the fold, reachable only by scrolling, which on a genuinely big
+        # monitor meant the whole card list no longer fit without scrolling
+        # at all. Capped so it still grows on a bigger screen (nice to
+        # have) but never past the point of crowding out the controls
+        # below it.
+        self.cubesat_3d.setMinimumHeight(200)
+        self.cubesat_3d.setMaximumHeight(420)
         self.cubesat_3d.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                                       QtWidgets.QSizePolicy.Expanding)
         imu.layout().addWidget(self.cubesat_3d, 0, 0, 1, 2)

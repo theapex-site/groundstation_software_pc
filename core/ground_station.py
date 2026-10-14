@@ -114,11 +114,32 @@ class GroundStation(QtWidgets.QMainWindow):
         # resize(1900, 1080) was taller than the usable area of a 1080p screen
         # once the title bar and taskbar are counted, so the window opened
         # already clipped with no way to see the bottom of either panel.
-        self.setMinimumSize(1180, 700)
-        screen = QtWidgets.QApplication.primaryScreen().availableGeometry()
-        self.resize(min(1900, screen.width()), min(1080, screen.height()))
-        if screen.width() <= 1600 or screen.height() <= 900:
-            self.setWindowState(self.windowState() | QtCore.Qt.WindowMaximized)
+        #
+        # primaryScreen(), not the screen this window will actually land on:
+        # on a laptop with Windows DPI scaling (125%/150%/175%), or when the
+        # app opens on a secondary monitor, availableGeometry() in *logical*
+        # pixels can come back smaller than the 1180x700 floor below —
+        # setMinimumSize then forces the window bigger than the screen with
+        # no way to shrink it to fit, which is what this read from. Asking
+        # for the screen under the cursor is the closest guess at which
+        # monitor the user is actually on before the window has been shown
+        # (Qt can't yet say which screen *this* window belongs to).
+        screen = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos())
+        if screen is None:
+            screen = QtWidgets.QApplication.primaryScreen()
+        avail = screen.availableGeometry()
+        self.setMinimumSize(min(1180, avail.width()), min(700, avail.height()))
+        # Always maximized, not capped at resize(1900, 1080) with maximize
+        # only below a small-screen threshold: that cap meant a genuinely
+        # bigger monitor got a window stuck at 1900x1080 in the middle of
+        # the screen instead of using it, which read as "doesn't fit" just
+        # as much as the small-screen case this was guarding against. The
+        # centre column already has the only Expanding stretch in the body
+        # layout (telemetry and the right panel both cap out at their own
+        # setMaximumWidth), so maximized scales cleanly on any screen size
+        # without the side panels ballooning past their design width.
+        self.resize(min(1900, avail.width()), min(1080, avail.height()))
+        self.setWindowState(self.windowState() | QtCore.Qt.WindowMaximized)
 
         # ── Background ────────────────────────────────────────────────────────
         # The website's animated space scene, drawn in paintEvent. Was
@@ -268,6 +289,12 @@ class GroundStation(QtWidgets.QMainWindow):
         for w in (self.com_label, self.rssi_label, self.snr_label,
                   self.clock_label, self.packets_label, self.rate_label):
             row.addWidget(w, 0, QtCore.Qt.AlignBottom)
+        # Dropped first under width pressure (narrow or heavily DPI-scaled
+        # screens, where the enforced 1180px floor is still the widest the
+        # monitor's logical area can offer) — see resizeEvent. Link status,
+        # COM port and signal quality matter more for spotting trouble than
+        # the mission clock or packet counters.
+        self._secondary_chips = (self.clock_label, self.packets_label, self.rate_label)
 
         # A gear means preferences everywhere else, and here it opened the
         # user's profile. The profile is now the user's initials; the gear
@@ -311,6 +338,20 @@ class GroundStation(QtWidgets.QMainWindow):
         row.addWidget(profile_btn)
 
         return bar
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # 1250 is empirical headroom above the app bar's own minimum content
+        # width (logo/wordmark, link chip, COM/RSSI/SNR, RTG, settings and
+        # avatar) at the default font — below it those chips were being
+        # compressed past their text width instead of any of them dropping
+        # out, which read as the RTG button and the last stat chip
+        # overlapping (seen on a laptop whose Windows DPI scaling leaves
+        # less logical width than this bar assumes).
+        if hasattr(self, "_secondary_chips"):
+            show = self.width() >= 1250
+            for w in self._secondary_chips:
+                w.setVisible(show)
 
     def _user_initials(self) -> str:
         """Up to two letters from the signed-in address, for the avatar."""
@@ -981,6 +1022,24 @@ class GroundStation(QtWidgets.QMainWindow):
             self.image_done_signal.emit(False, 0, 0)
 
     def _receive_image_chunked(self):
+        """
+        Runs on a daemon thread — any exception that escapes it kills the
+        thread silently with nothing left running to ever call
+        _exit_image_mode(), which leaves the app stuck in image_mode
+        forever: Cancel just clears a flag nobody is left to check, and
+        telemetry never resumes. Catching everything here and always
+        calling _exit_image_mode() exactly once is cheap insurance against
+        the actual case that hit this (a print() of raw serial noise
+        containing a character the Windows console's codepage couldn't
+        encode, raising UnicodeEncodeError) and any future one like it.
+        """
+        try:
+            self._receive_image_chunked_inner()
+        except Exception as e:
+            print(f"[GCS] Unexpected error in image receiver: {e!r}")
+            self._exit_image_mode(bytearray())
+
+    def _receive_image_chunked_inner(self):
         mode_start = time.time()   # hard wall-clock ceiling for the whole transfer
 
         # ── Phase 1: wait for CS_FILE_INFO ───────────────────────────────────
@@ -988,6 +1047,17 @@ class GroundStation(QtWidgets.QMainWindow):
         deadline = time.time() + FILE_INFO_TIMEOUT
         got_file_info = False
         while True:
+            # Cancel pressed while still waiting on the header — the loop
+            # below this point only ever checks the two time deadlines, so
+            # without this, Cancel set self.receiving_image = False and
+            # the UI said "Cancelling…" but nothing actually happened
+            # until FILE_INFO_TIMEOUT (or the hard ceiling) expired on its
+            # own, up to 40s/150s later.
+            if not self.receiving_image:
+                print("[GCS] Cancelled while waiting for CS_FILE_INFO")
+                self._exit_image_mode(bytearray())
+                return
+
             # Hard ceiling check
             if time.time() - mode_start > IMAGE_MODE_TIMEOUT:
                 print("[GCS] Hard timeout waiting for CS_FILE_INFO — returning to normal")
