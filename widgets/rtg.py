@@ -94,7 +94,7 @@ class RTGTile(MiniGraph):
         self.grid_row = 0
         self.col_span = 1
         self.row_span = 1
-        self.setMinimumHeight(150)
+        self.setMinimumHeight(theme.sc(150))
         self.setMouseTracking(True)
         self.setToolTip(
             "Drag to move · drag the corner to resize\n"
@@ -155,8 +155,8 @@ class RTGTile(MiniGraph):
     def mouseMoveEvent(self, event):
         if self._resizing:
             delta = event.globalPos() - self._press_origin
-            w = max(self.MIN_PX, self._start_geom.width() + delta.x())
-            h = max(self.MIN_PX, self._start_geom.height() + delta.y())
+            w = max(theme.sc(self.MIN_PX), self._start_geom.width() + delta.x())
+            h = max(theme.sc(self.MIN_PX), self._start_geom.height() + delta.y())
             self.resize(int(w), int(h))
             event.accept()
             return
@@ -210,7 +210,8 @@ class RTGTile(MiniGraph):
                 pen = QtGui.QPen(QtGui.QColor(theme.TEAL))
                 pen.setWidthF(1.8)
                 path = QtGui.QPainterPath()
-                path.addRoundedRect(rect, theme.R_CARD, theme.R_CARD)
+                r_card = theme.sc(theme.R_CARD)
+                path.addRoundedRect(rect, r_card, r_card)
                 p.strokePath(path, pen)
             # Top-right corner, clear of the title on the left and the
             # right-aligned value/unit, which stop short of the rounded
@@ -397,9 +398,15 @@ class RTGWindow(QtWidgets.QMainWindow):
         root.setObjectName("rtgRoot")
         root.setStyleSheet(f"QWidget#rtgRoot {{ background: {theme.DEEP}; }}")
         self.setCentralWidget(root)
+        # Scaled once per instance so every self.ROW_H read below (grid math,
+        # tile placement) agrees — class-level ROW_H stays the raw design
+        # value so this still reads as "170px at 1920x1080" at a glance.
+        self.ROW_H = theme.sc(RTGWindow.ROW_H)
+        self._gap = theme.sc(theme.GAP)
+
         outer = QtWidgets.QVBoxLayout(root)
-        outer.setContentsMargins(theme.GAP, theme.GAP, theme.GAP, theme.GAP)
-        outer.setSpacing(theme.GAP)
+        outer.setContentsMargins(self._gap, self._gap, self._gap, self._gap)
+        outer.setSpacing(self._gap)
 
         outer.addWidget(self._build_header())
 
@@ -420,7 +427,7 @@ class RTGWindow(QtWidgets.QMainWindow):
             self._canvas)
         self._empty_hint.setAlignment(QtCore.Qt.AlignCenter)
         self._empty_hint.setStyleSheet(
-            f"color: {theme.DIM}; font-size: {theme.FS_HEAD}px; background: transparent;")
+            f"color: {theme.DIM}; font-size: {theme.sc_font(theme.FS_HEAD)}px; background: transparent;")
 
         self._load_layout()
 
@@ -430,10 +437,11 @@ class RTGWindow(QtWidgets.QMainWindow):
     def _build_header(self) -> QtWidgets.QWidget:
         bar = QtWidgets.QWidget()
         bar.setObjectName("appBar")
-        bar.setFixedHeight(52)
+        bar.setFixedHeight(theme.sc(52))
         row = QtWidgets.QHBoxLayout(bar)
-        row.setContentsMargins(theme.PAD, 0, theme.PAD, 0)
-        row.setSpacing(10)
+        pad = theme.sc(theme.PAD)
+        row.setContentsMargins(pad, 0, pad, 0)
+        row.setSpacing(theme.sc(10))
 
         title = QtWidgets.QLabel("RTG")
         title.setObjectName("appBarMark")
@@ -525,8 +533,8 @@ class RTGWindow(QtWidgets.QMainWindow):
         cell_w = max(self._canvas.width() / self.COLUMNS, 1)
         geo = tile.geometry()
 
-        col_span = max(1, min(round((geo.width() + theme.GAP) / cell_w), self.COLUMNS))
-        row_span = max(1, min(round((geo.height() + theme.GAP) / self.ROW_H),
+        col_span = max(1, min(round((geo.width() + self._gap) / cell_w), self.COLUMNS))
+        row_span = max(1, min(round((geo.height() + self._gap) / self.ROW_H),
                               RTGTile.MAX_ROW_SPAN))
         col = max(0, min(round(geo.x() / cell_w), self.COLUMNS - col_span))
         row = max(0, round(geo.y() / self.ROW_H))
@@ -582,12 +590,12 @@ class RTGWindow(QtWidgets.QMainWindow):
         for tile in self.tiles.values():
             x = tile.grid_col * cell_w
             y = tile.grid_row * self.ROW_H
-            w = max(tile.col_span * cell_w - theme.GAP, 40)
-            h = max(tile.row_span * self.ROW_H - theme.GAP, 40)
+            w = max(tile.col_span * cell_w - self._gap, theme.sc(40))
+            h = max(tile.row_span * self.ROW_H - self._gap, theme.sc(40))
             tile.setGeometry(int(x), int(y), int(w), int(h))
             max_row = max(max_row, tile.grid_row + tile.row_span)
 
-        needed = max_row * self.ROW_H + theme.GAP
+        needed = max_row * self.ROW_H + self._gap
         self._canvas.setMinimumHeight(max(needed, self._scroll.viewport().height()))
 
     # ── pop-out ───────────────────────────────────────────────────────────────

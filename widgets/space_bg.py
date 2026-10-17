@@ -29,7 +29,9 @@ import os
 import random
 import time
 
-from PyQt5 import QtCore, QtGui
+from PyQt5 import QtCore, QtGui, QtWidgets
+
+import theme
 
 # ── Scene constants, as the website has them ────────────────────────────────
 BASE = QtGui.QColor("#000000")          # css --navy-deep
@@ -133,7 +135,18 @@ def static_layer(width: int, height: int) -> QtGui.QPixmap:
     if hit is not None:
         return hit
 
-    pix = QtGui.QPixmap(width, height)
+    # Drawn once and cached (see the module docstring), then blitted onto
+    # the live widget-bound painter every frame — that painter already
+    # scales correctly for the screen's devicePixelRatio since Qt does
+    # that automatically for anything painted straight onto a QWidget, but
+    # this standalone QPixmap does not get that for free: left at the
+    # default ratio of 1, it would hold only `width`x`height` real pixels
+    # and then get stretched up to fill however many physical pixels the
+    # screen actually has, blurring just the nebulae/planet layer while
+    # the stars drawn straight onto the widget stayed sharp.
+    ratio = theme.device_ratio()
+    pix = QtGui.QPixmap(int(width * ratio), int(height * ratio))
+    pix.setDevicePixelRatio(ratio)
     pix.fill(BASE)
     p = QtGui.QPainter(pix)
     p.setRenderHint(QtGui.QPainter.Antialiasing, True)
@@ -357,7 +370,13 @@ class SpaceScene:
 
 def backdrop(width: int, height: int) -> QtGui.QPixmap:
     """A single still frame. Used where there is no timer to drive animation."""
-    pix = QtGui.QPixmap(max(1, int(width)), max(1, int(height)))
+    # This pixmap is the final image (set straight onto a QLabel via
+    # setPixmap), not blitted through an already-HiDPI-aware widget
+    # painter like SpaceScene.draw() normally is — see static_layer()'s
+    # comment for why it still needs its own devicePixelRatio set.
+    ratio = theme.device_ratio()
+    pix = QtGui.QPixmap(max(1, int(width * ratio)), max(1, int(height * ratio)))
+    pix.setDevicePixelRatio(ratio)
     pix.fill(BASE)
     p = QtGui.QPainter(pix)
     try:

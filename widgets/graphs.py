@@ -34,7 +34,7 @@ def _fmt(value: float) -> str:
 def _font(family: str, px: int, weight=QtGui.QFont.Normal,
           tracking: float = 0.0) -> QtGui.QFont:
     f = QtGui.QFont(family)
-    f.setPixelSize(px)
+    f.setPixelSize(theme.sc_font(px))
     f.setWeight(weight)
     if tracking:
         f.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, tracking)
@@ -61,7 +61,7 @@ class MiniGraph(QtWidgets.QWidget):
     def __init__(self, title: str, unit: str = "", max_points: int = MINI_GRAPH_MAX_POINTS,
                  accent: str = None):
         super().__init__()
-        self.setMinimumHeight(160)
+        self.setMinimumHeight(theme.sc(160))
         self.title = title
         self.unit  = unit
         self.max_points = max_points
@@ -120,7 +120,8 @@ class MiniGraph(QtWidgets.QWidget):
         1px border lands on a pixel instead of straddling two)."""
         rect = QtCore.QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         path = QtGui.QPainterPath()
-        path.addRoundedRect(rect, theme.R_CARD, theme.R_CARD)
+        r_card = theme.sc(theme.R_CARD)
+        path.addRoundedRect(rect, r_card, r_card)
         p.fillPath(path, QtGui.QColor(theme.RAISED))
         # The border always carries this tile's own accent now, not just on
         # hover — a wall of identically neutral-grey-bordered cards gave the
@@ -505,24 +506,25 @@ class PopupGraph(MiniGraph):
             val_str = _fmt(self.hover_value) + (f" {self.unit}" if self.unit else "")
             lines   = [self.hover_time, val_str]
             fm      = QtGui.QFontMetrics(self._f_tick)
-            box_w   = max(fm.horizontalAdvance(s) for s in lines) + 16
-            box_h   = fm.height() * 2 + 12
-            bx = min(x + 14, plot.right() - box_w)
-            by = max(y - box_h - 10, plot.top())
+            box_w   = max(fm.horizontalAdvance(s) for s in lines) + theme.sc(16)
+            box_h   = fm.height() * 2 + theme.sc(12)
+            bx = min(x + theme.sc(14), plot.right() - box_w)
+            by = max(y - box_h - theme.sc(10), plot.top())
 
             tip = QtGui.QPainterPath()
+            r_sm = theme.sc(theme.R_SM)
             tip.addRoundedRect(QtCore.QRectF(bx, by, box_w, box_h),
-                               theme.R_SM, theme.R_SM)
+                               r_sm, r_sm)
             p.fillPath(tip, QtGui.QColor(8, 8, 15, 235))
             p.strokePath(tip, QtGui.QPen(QtGui.QColor(theme.LINE), 1.0))
 
             p.setFont(self._f_tick)
             p.setPen(QtGui.QColor(theme.SLATE))
-            p.drawText(QtCore.QRectF(bx + 8, by + 6, box_w - 16, fm.height()),
+            p.drawText(QtCore.QRectF(bx + theme.sc(8), by + theme.sc(6), box_w - theme.sc(16), fm.height()),
                        QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, lines[0])
             p.setPen(QtGui.QColor(theme.CREAM))
-            p.drawText(QtCore.QRectF(bx + 8, by + 6 + fm.height(),
-                                     box_w - 16, fm.height()),
+            p.drawText(QtCore.QRectF(bx + theme.sc(8), by + theme.sc(6) + fm.height(),
+                                     box_w - theme.sc(16), fm.height()),
                        QtCore.Qt.AlignVCenter | QtCore.Qt.AlignLeft, lines[1])
         p.end()
 
@@ -536,14 +538,14 @@ class GraphPopup(QtWidgets.QMainWindow):
     def __init__(self, source_graph: MiniGraph):
         super().__init__()
         self.setWindowTitle(f"{source_graph.title} — APEX GCS")
-        self.resize(900, 450)
+        self.resize(theme.sc(900), theme.sc(450))
         self.setStyleSheet(f"""
             QMainWindow {{ background-color: {theme.PANEL}; }}
             QStatusBar  {{
                 background-color: {theme.PANEL};
                 color: {theme.SLATE};
                 font-family: "{theme.MONO}";
-                font-size: {theme.FS_MICRO}px;
+                font-size: {theme.sc_font(theme.FS_MICRO)}px;
                 border-top: 1px solid {theme.LINE};
             }}
             QStatusBar::item {{ border: 0; }}
@@ -553,7 +555,8 @@ class GraphPopup(QtWidgets.QMainWindow):
         self.graph = PopupGraph(source_graph.title, source_graph.unit,
                                 accent=getattr(source_graph, "accent", None))
         self.setCentralWidget(self.graph)
-        self.setContentsMargins(theme.GAP, theme.GAP, theme.GAP, 0)
+        gap = theme.sc(theme.GAP)
+        self.setContentsMargins(gap, gap, gap, 0)
 
         self.statusBar().showMessage("hover the trace to inspect a sample")
 

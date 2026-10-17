@@ -469,7 +469,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("APEX GCS Object Detection")
-        self.setMinimumSize(1060, 680)
+        self.setMinimumSize(theme.sc(1060), theme.sc(680))
         self.setModal(True)
         self.setStyleSheet(self._build_stylesheet())
 
@@ -503,8 +503,8 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         QDialog {{ background:{B}; color:{FG}; }}
         QTextEdit {{
             background:{B}; color:{FG}; border:1px solid {BD};
-            border-radius:{theme.R_CTRL}px;
-            font-family:'{theme.MONO}'; font-size:{theme.FS_LABEL}px;
+            border-radius:{theme.sc(theme.R_CTRL)}px;
+            font-family:'{theme.MONO}'; font-size:{theme.sc_font(theme.FS_LABEL)}px;
         }}
         QPushButton#accentBtn {{
             background:{theme.GRADIENT}; color:{B}; border:none;
@@ -519,20 +519,20 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
     def _build_ui(self):
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(14, 12, 14, 10)
-        root.setSpacing(8)
+        root.setContentsMargins(theme.sc(14), theme.sc(12), theme.sc(14), theme.sc(10))
+        root.setSpacing(theme.sc(8))
 
         # ── Header ────────────────────────────────────────────────────────────
         hdr = QtWidgets.QHBoxLayout()
         title_lbl = QtWidgets.QLabel("APEX")
-        title_lbl.setStyleSheet(f"color:{self._ORANGE}; font-size:20px; font-weight:bold; font-family:'{theme.MONO}';")
+        title_lbl.setStyleSheet(f"color:{self._ORANGE}; font-size:{theme.sc_font(20)}px; font-weight:bold; font-family:'{theme.MONO}';")
         sub_lbl   = QtWidgets.QLabel("  OBJECT DETECTION")
-        sub_lbl.setStyleSheet(f"color:{self._FG}; font-size:20px; font-weight:bold; font-family:'{theme.MONO}';")
+        sub_lbl.setStyleSheet(f"color:{self._FG}; font-size:{theme.sc_font(20)}px; font-weight:bold; font-family:'{theme.MONO}';")
         hdr.addWidget(title_lbl)
         hdr.addWidget(sub_lbl)
         hdr.addStretch()
         self._status_lbl = QtWidgets.QLabel("● MODEL NOT LOADED")
-        self._status_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:11px;")
+        self._status_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:{theme.sc_font(11)}px;")
         hdr.addWidget(self._status_lbl)
         root.addLayout(hdr)
 
@@ -543,7 +543,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
         # ── Button bar ────────────────────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
-        btn_row.setSpacing(8)
+        btn_row.setSpacing(theme.sc(8))
 
         self._btn_last    = self._make_btn("Last Captured", self._load_last_captured, accent=True,
                                         icon_name="camera")
@@ -560,16 +560,16 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
         # Confidence row (right-aligned in same bar)
         conf_lbl = QtWidgets.QLabel("Confidence:")
-        conf_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:10px;")
+        conf_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:{theme.sc_font(10)}px;")
         self._conf_spin = QtWidgets.QDoubleSpinBox()
         self._conf_spin.setRange(0.01, 1.00)
         self._conf_spin.setSingleStep(0.05)
         self._conf_spin.setValue(self._conf_thresh)
         self._conf_spin.setDecimals(2)
-        self._conf_spin.setFixedWidth(68)
+        self._conf_spin.setFixedWidth(theme.sc(68))
         self._conf_spin.setStyleSheet(
             f"background:#08080f; color:{self._FG}; border:1px solid {self._BORDER};"
-            f"font-family:'{theme.MONO}'; font-size:10px; border-radius:{theme.R_SM}px; padding:2px;"
+            f"font-family:'{theme.MONO}'; font-size:{theme.sc_font(10)}px; border-radius:{theme.sc(theme.R_SM)}px; padding:{theme.sc(2)}px;"
         )
         btn_row.addWidget(conf_lbl)
         btn_row.addWidget(self._conf_spin)
@@ -578,7 +578,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         # Progress bar
         self._progress = QtWidgets.QProgressBar()
         self._progress.setRange(0, 0)   # indeterminate by default
-        self._progress.setFixedHeight(6)
+        self._progress.setFixedHeight(theme.sc(6))
         self._progress.setVisible(False)
         root.addWidget(self._progress)
 
@@ -589,16 +589,16 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
         # Left: image preview
         left_frame = QtWidgets.QFrame()
-        left_frame.setStyleSheet(f"background:{self._PANEL}; border:1px solid {self._BORDER}; border-radius:{theme.R_CTRL}px;")
+        left_frame.setStyleSheet(f"background:{self._PANEL}; border:1px solid {self._BORDER}; border-radius:{theme.sc(theme.R_CTRL)}px;")
         left_layout = QtWidgets.QVBoxLayout(left_frame)
-        left_layout.setContentsMargins(4, 4, 4, 4)
+        left_layout.setContentsMargins(theme.sc(4), theme.sc(4), theme.sc(4), theme.sc(4))
 
         self._img_label = QtWidgets.QLabel()
         self._img_label.setAlignment(Qt.AlignCenter)
-        self._img_label.setMinimumSize(400, 300)
-        self._img_label.setStyleSheet(f"background:{self._BG}; border-radius:{theme.R_SM}px;")
+        self._img_label.setMinimumSize(theme.sc(400), theme.sc(300))
+        self._img_label.setStyleSheet(f"background:{self._BG}; border-radius:{theme.sc(theme.R_SM)}px;")
         self._img_label.setText(
-            f"<span style='color:{self._DIM}; font-family:{theme.MONO}; font-size:13px;'>"
+            f"<span style='color:{self._DIM}; font-family:{theme.MONO}; font-size:{theme.sc_font(13)}px;'>"
             "Click  Last Captured  or  Upload Image  to begin"
             "</span>"
         )
@@ -607,7 +607,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         # Image filename label
         self._img_name_lbl = QtWidgets.QLabel("")
         self._img_name_lbl.setAlignment(Qt.AlignCenter)
-        self._img_name_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:9px;")
+        self._img_name_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:{theme.sc_font(9)}px;")
         left_layout.addWidget(self._img_name_lbl)
 
         splitter.addWidget(left_frame)
@@ -618,14 +618,14 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         # it rendered and accepted drags, but the pane could never move.
         # A minimum plus a stretch factor lets it resize and still keeps
         # the report readable.
-        right_frame.setMinimumWidth(300)
-        right_frame.setStyleSheet(f"background:{self._PANEL}; border:1px solid {self._BORDER}; border-radius:{theme.R_CTRL}px;")
+        right_frame.setMinimumWidth(theme.sc(300))
+        right_frame.setStyleSheet(f"background:{self._PANEL}; border:1px solid {self._BORDER}; border-radius:{theme.sc(theme.R_CTRL)}px;")
         right_layout = QtWidgets.QVBoxLayout(right_frame)
-        right_layout.setContentsMargins(10, 8, 10, 8)
-        right_layout.setSpacing(6)
+        right_layout.setContentsMargins(theme.sc(10), theme.sc(8), theme.sc(10), theme.sc(8))
+        right_layout.setSpacing(theme.sc(6))
 
         rep_title = QtWidgets.QLabel("DETECTION REPORT")
-        rep_title.setStyleSheet(f"color:{self._ORANGE}; font-family:'{theme.MONO}'; font-size:11px; font-weight:bold;")
+        rep_title.setStyleSheet(f"color:{self._ORANGE}; font-family:'{theme.MONO}'; font-size:{theme.sc_font(11)}px; font-weight:bold;")
         right_layout.addWidget(rep_title)
 
         sep2 = QtWidgets.QFrame()
@@ -662,7 +662,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
 
         # Status bar
         self._bottom_lbl = QtWidgets.QLabel("")
-        self._bottom_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:9px;")
+        self._bottom_lbl.setStyleSheet(f"color:{self._DIM}; font-family:'{theme.MONO}'; font-size:{theme.sc_font(9)}px;")
         root.addWidget(self._bottom_lbl)
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -673,8 +673,9 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
                   icon_name: str = "") -> QtWidgets.QPushButton:
         b = QtWidgets.QPushButton(text)
         if icon_name:
-            b.setIcon(theme.icon(icon_name, theme.SLATE, 15))
-            b.setIconSize(QtCore.QSize(15, 15))
+            icon_px = theme.sc(15)
+            b.setIcon(theme.icon(icon_name, theme.SLATE, icon_px))
+            b.setIconSize(QtCore.QSize(icon_px, icon_px))
         b.setCursor(Qt.PointingHandCursor)
         if accent:
             b.setObjectName("accentBtn")
@@ -685,22 +686,22 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         f = QtWidgets.QFrame()
         f.setStyleSheet(
             f"background:{theme.RAISED}; border:1px solid {self._BORDER};"
-            f" border-radius:{theme.R_CTRL}px;"
+            f" border-radius:{theme.sc(theme.R_CTRL)}px;"
         )
         vbox = QtWidgets.QVBoxLayout(f)
-        vbox.setContentsMargins(6, 4, 6, 4)
-        vbox.setSpacing(1)
+        vbox.setContentsMargins(theme.sc(6), theme.sc(4), theme.sc(6), theme.sc(4))
+        vbox.setSpacing(theme.sc(1))
 
         lbl = QtWidgets.QLabel(label)
         lbl.setAlignment(Qt.AlignCenter)
         lbl.setObjectName("nameLabel")
-        lbl.setStyleSheet(f"color:{self._DIM}; font-size:8px; font-family:'{theme.MONO}'; font-weight:bold;")
+        lbl.setStyleSheet(f"color:{self._DIM}; font-size:{theme.sc_font(8)}px; font-family:'{theme.MONO}'; font-weight:bold;")
         vbox.addWidget(lbl)
 
         val = QtWidgets.QLabel(value)
         val.setAlignment(Qt.AlignCenter)
         val.setObjectName("valueLabel")
-        val.setStyleSheet(f"color:{self._FG}; font-size:13px; font-family:'{theme.MONO}'; font-weight:bold;")
+        val.setStyleSheet(f"color:{self._FG}; font-size:{theme.sc_font(13)}px; font-family:'{theme.MONO}'; font-weight:bold;")
         vbox.addWidget(val)
 
         f._val_lbl = val
@@ -709,14 +710,14 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
     def _set_card(self, card: QtWidgets.QFrame, value: str, color: str = ""):
         c = color or self._FG
         card._val_lbl.setStyleSheet(
-            f"color:{c}; font-size:13px; font-family:'{theme.MONO}'; font-weight:bold;"
+            f"color:{c}; font-size:{theme.sc_font(13)}px; font-family:'{theme.MONO}'; font-weight:bold;"
         )
         card._val_lbl.setText(value)
 
     def _set_status(self, text: str, color: str = "#44cc44"):
         self._status_lbl.setText(text)
         self._status_lbl.setStyleSheet(
-            f"color:{color}; font-family:'{theme.MONO}'; font-size:11px;"
+            f"color:{color}; font-family:'{theme.MONO}'; font-size:{theme.sc_font(11)}px;"
         )
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -840,7 +841,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         except Exception as e:
             self._img_label.setPixmap(QPixmap())
             self._img_label.setText(
-                f"<span style='color:#ff4444; font-family:{theme.MONO}; font-size:12px;'>{e}</span>"
+                f"<span style='color:#ff4444; font-family:{theme.MONO}; font-size:{theme.sc_font(12)}px;'>{e}</span>"
             )
 
     def _show_bgr(self, bgr):
@@ -851,9 +852,9 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         qimg   = QImage(rgb.data, w, h, w * 3, QImage.Format_RGB888)
         pixmap = QPixmap.fromImage(qimg)
 
-        lw = max(self._img_label.width(),  400)
-        lh = max(self._img_label.height(), 300)
-        pixmap = pixmap.scaled(lw, lh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        lw = max(self._img_label.width(),  theme.sc(400))
+        lh = max(self._img_label.height(), theme.sc(300))
+        pixmap = theme.scaled_pixmap(pixmap, lw, lh)
         self._img_label.setPixmap(pixmap)
 
     def resizeEvent(self, event):
@@ -1099,7 +1100,7 @@ class ObjectDetectionDialog(QtWidgets.QDialog):
         self._elapsed_ms    = 0.0
         self._img_label.setPixmap(QPixmap())
         self._img_label.setText(
-            f"<span style='color:{self._DIM}; font-family:{theme.MONO}; font-size:13px;'>"
+            f"<span style='color:{self._DIM}; font-family:{theme.MONO}; font-size:{theme.sc_font(13)}px;'>"
             "Click  Last Captured  or  Upload Image  to begin"
             "</span>"
         )

@@ -66,7 +66,7 @@ try:
 except Exception as _e:
     print("[WARN] onnxruntime pre-load failed:", _e)
 
-from PyQt5 import QtCore, QtWidgets
+from PyQt5 import QtCore, QtGui, QtWidgets
 
 import theme
 from widgets.dialogs     import LoginWindow
@@ -89,6 +89,21 @@ QtWidgets.QApplication.setAttribute(QtCore.Qt.AA_ShareOpenGLContexts, True)
 def main():
     app = QtWidgets.QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
+
+    # One scale factor for the whole app, from the real screen it's about
+    # to open on — see theme.set_scale(). Screen-under-the-cursor, not
+    # primaryScreen(): same reasoning as GroundStation's own window sizing
+    # (core/ground_station.py) — closest guess at which monitor the user
+    # is actually on before any window has been shown. Must run before
+    # theme.qss() (bakes the factor into font-size/radius px) and before
+    # LoginWindow is built (its dialogs are fixed-size).
+    screen = QtGui.QGuiApplication.screenAt(QtGui.QCursor.pos())
+    if screen is None:
+        screen = QtWidgets.QApplication.primaryScreen()
+    avail = screen.availableGeometry()
+    factor = theme.set_scale(avail)
+    print(f"[SCALE] screen={screen.name()!r} availableGeometry={avail.width()}x{avail.height()} "
+          f"devicePixelRatio={screen.devicePixelRatio()} -> theme._SCALE={factor}")
 
     # Loads any bundled faces, resolves the display/body/mono families against
     # what is installed, and sets the window icon from icon.ico.

@@ -58,6 +58,7 @@ def _icon_btn(text: str, icon_name: str,
     unrelated hues. A QIcon is tinted from the theme tokens.
     """
     btn = QtWidgets.QPushButton(text)
+    size = theme.sc(size)
     btn.setIcon(theme.icon(icon_name, color, size))
     btn.setIconSize(QtCore.QSize(size, size))
     return btn
@@ -134,21 +135,21 @@ def _base_style() -> str:
     QLabel {{
         color: {_TEXT};
         font-family: "{theme.BODY}";
-        font-size: {theme.FS_BODY}px;
+        font-size: {theme.sc_font(theme.FS_BODY)}px;
     }}
-    QPushButton {{ min-width: 92px; text-align: center; }}
-    QLineEdit {{ font-size: {theme.FS_VALUE}px; }}
+    QPushButton {{ min-width: {theme.sc(92)}px; text-align: center; }}
+    QLineEdit {{ font-size: {theme.sc_font(theme.FS_VALUE)}px; }}
 """
 
 def _labelled_input(parent_layout, label_text, placeholder="",
                     echo=QtWidgets.QLineEdit.Normal):
     lbl = QtWidgets.QLabel(label_text)
-    lbl.setStyleSheet(f"color: {_TEXT}; font-size: 13px; font-weight: bold; margin-bottom: 3px;")
+    lbl.setStyleSheet(f"color: {_TEXT}; font-size: {theme.sc_font(13)}px; font-weight: bold; margin-bottom: {theme.sc(3)}px;")
     inp = QtWidgets.QLineEdit()
     inp.setEchoMode(echo)
     inp.setPlaceholderText(placeholder)
-    inp.setMinimumHeight(38)
-    inp.setStyleSheet("font-size: 15px;")  
+    inp.setMinimumHeight(theme.sc(38))
+    inp.setStyleSheet(f"font-size: {theme.sc_font(15)}px;")
     parent_layout.addWidget(lbl)
     parent_layout.addWidget(inp)
     return inp
@@ -178,15 +179,15 @@ class _VerifyEmailDialog(QtWidgets.QDialog):
 
         self.setWindowTitle("Verify Email")
         self.setModal(True)
-        self.setFixedWidth(420)
+        self.setFixedWidth(theme.sc(420))
         self.setStyleSheet(_base_style())
 
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(12)
+        lay.setContentsMargins(theme.sc(24), theme.sc(20), theme.sc(24), theme.sc(20))
+        lay.setSpacing(theme.sc(12))
 
         title = QtWidgets.QLabel("Check your inbox")
-        title.setStyleSheet(f"color:{_ACCENT}; font-size:16px; font-weight:bold;")
+        title.setStyleSheet(f"color:{_ACCENT}; font-size:{theme.sc_font(16)}px; font-weight:bold;")
         lay.addWidget(title)
 
         body = QtWidgets.QLabel(
@@ -194,11 +195,11 @@ class _VerifyEmailDialog(QtWidgets.QDialog):
             "Open it, then come back here. This window closes by itself "
             "once it's confirmed.".format(email))
         body.setWordWrap(True)
-        body.setStyleSheet(f"color:{_TEXT}; font-size:12px;")
+        body.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(12)}px;")
         lay.addWidget(body)
 
         self._status = QtWidgets.QLabel("Waiting for confirmation…")
-        self._status.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        self._status.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         lay.addWidget(self._status)
 
         row = QtWidgets.QHBoxLayout()
@@ -266,27 +267,27 @@ class _ReauthPage(QtWidgets.QWidget):
 
     def _build(self):
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(46, 40, 46, 40)
-        lay.setSpacing(8)
+        lay.setContentsMargins(theme.sc(46), theme.sc(40), theme.sc(46), theme.sc(40))
+        lay.setSpacing(theme.sc(8))
         lay.addStretch()
 
         title = QtWidgets.QLabel("Licence Required")
         title.setStyleSheet(
-            f"color:{_ACCENT}; font-size:22px; font-weight:bold; letter-spacing:1px;")
+            f"color:{_ACCENT}; font-size:{theme.sc_font(22)}px; font-weight:bold; letter-spacing:{theme.sc_font(1)}px;")
         lay.addWidget(title)
 
         sub = QtWidgets.QLabel("APEX Ground Control Station")
-        sub.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        sub.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         lay.addWidget(sub)
-        lay.addSpacing(10)
+        lay.addSpacing(theme.sc(10))
 
         self._reason = QtWidgets.QLabel(
             "Your licence key is no longer valid. Enter the key APEX sent you "
             "to continue.")
         self._reason.setWordWrap(True)
-        self._reason.setStyleSheet(f"color:{_TEXT}; font-size:12px;")
+        self._reason.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(12)}px;")
         lay.addWidget(self._reason)
-        lay.addSpacing(12)
+        lay.addSpacing(theme.sc(12))
 
         self.email_inp = _labelled_input(lay, "Email", "your@email.com")
         self.licence_inp = _labelled_input(
@@ -294,16 +295,16 @@ class _ReauthPage(QtWidgets.QWidget):
         self.licence_inp.returnPressed.connect(self._do_auth)
 
         hint = QtWidgets.QLabel("Check your email for the latest key from APEX.")
-        hint.setStyleSheet(f"color:{_MUTED}; font-size:10px;")
+        hint.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(10)}px;")
         lay.addWidget(hint)
-        lay.addSpacing(14)
+        lay.addSpacing(theme.sc(14))
 
         self.auth_btn = QtWidgets.QPushButton("Authenticate")
         self.auth_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         self.auth_btn.setStyleSheet(f"""
             QPushButton {{
-                background:{_ACCENT}; color:{_BG}; border:none; border-radius:{theme.R_CTRL}px;
-                padding:10px; font-size:13px; font-weight:bold;
+                background:{_ACCENT}; color:{_BG}; border:none; border-radius:{theme.sc(theme.R_CTRL)}px;
+                padding:{theme.sc(10)}px; font-size:{theme.sc_font(13)}px; font-weight:bold;
             }}
             QPushButton:hover {{ background:{theme.GRADIENT_COOL}; }}
             QPushButton:disabled {{ background:{_BORDER}; color:{theme.DISABLED}; }}
@@ -315,7 +316,7 @@ class _ReauthPage(QtWidgets.QWidget):
         other.setFlat(True)
         other.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         other.setStyleSheet(
-            f"QPushButton {{ color:{_MUTED}; font-size:11px; border:none;"
+            f"QPushButton {{ color:{_MUTED}; font-size:{theme.sc_font(11)}px; border:none;"
             f" background:transparent; text-decoration:underline; }}"
             f"QPushButton:hover {{ color:{_ACCENT}; }}")
         other.clicked.connect(self._use_other_account)
@@ -449,11 +450,9 @@ def _offline_sticker(parent=None) -> tuple:
     page so the scaling cost isn't repeated on every state flip."""
     label = QtWidgets.QLabel(parent)
     label.setAlignment(QtCore.Qt.AlignCenter)
-    size = QtCore.QSize(260, 260)
-    no_net = QtGui.QPixmap(NO_INTERNET_IMAGE).scaled(
-        size, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
-    back_on = QtGui.QPixmap(BACK_ONLINE_IMAGE).scaled(
-        size, QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+    side = theme.sc(260)
+    no_net = theme.scaled_pixmap(QtGui.QPixmap(NO_INTERNET_IMAGE), side, side)
+    back_on = theme.scaled_pixmap(QtGui.QPixmap(BACK_ONLINE_IMAGE), side, side)
     return label, no_net, back_on
 
 
@@ -628,44 +627,54 @@ class _LoginPage(QtWidgets.QWidget):
         outer.addWidget(self._signing_widget)
         sign_lay = QtWidgets.QVBoxLayout(self._signing_widget)
         sign_lay.setAlignment(QtCore.Qt.AlignCenter)
-        sign_lay.setSpacing(16)
+        sign_lay.setSpacing(theme.sc(16))
 
         signing_logo = QtWidgets.QLabel()
         signing_logo.setAlignment(QtCore.Qt.AlignCenter)
-        signing_logo.setFixedSize(220, 220)
+        side = theme.sc(220)
+        signing_logo.setFixedSize(side, side)
+        # setScaledContents so QLabel stretches whatever frame size the
+        # movie decodes at to fill its own rect through its own
+        # widget-bound painter (devicePixelRatio-aware for free) — paired
+        # with decoding the movie itself at the screen's real pixel
+        # density below, rather than at this label's logical size, so
+        # there is actually extra resolution to downsample from instead
+        # of stretching a lower-res frame up into a blur.
+        signing_logo.setScaledContents(True)
         self._signing_movie = QtGui.QMovie(SIGNIN_ANIMATION)
-        self._signing_movie.setScaledSize(QtCore.QSize(220, 220))
+        ratio = theme.device_ratio()
+        self._signing_movie.setScaledSize(QtCore.QSize(int(side * ratio), int(side * ratio)))
         signing_logo.setMovie(self._signing_movie)
         sign_lay.addWidget(signing_logo)
 
         signing_msg = QtWidgets.QLabel("Signing you in…")
         signing_msg.setAlignment(QtCore.Qt.AlignCenter)
-        signing_msg.setStyleSheet(f"color:{_MUTED}; font-size:12px; letter-spacing:1px;")
+        signing_msg.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(12)}px; letter-spacing:{theme.sc_font(1)}px;")
         sign_lay.addWidget(signing_msg)
 
         lay = QtWidgets.QVBoxLayout(self._form_widget)
-        lay.setContentsMargins(40, 40, 40, 40)
-        lay.setSpacing(10)
+        lay.setContentsMargins(theme.sc(40), theme.sc(40), theme.sc(40), theme.sc(40))
+        lay.setSpacing(theme.sc(10))
         lay.addStretch(1)
 
         # Title
         title = QtWidgets.QLabel("Sign In")
         title.setStyleSheet(
-            f"color:{_ACCENT}; font-size:22px; font-weight:bold;"
-            f" letter-spacing:1px;")
+            f"color:{_ACCENT}; font-size:{theme.sc_font(22)}px; font-weight:bold;"
+            f" letter-spacing:{theme.sc_font(1)}px;")
         lay.addWidget(title)
 
         sub = QtWidgets.QLabel("APEX Ground Control Station")
-        sub.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        sub.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         lay.addWidget(sub)
-        lay.addSpacing(10)
+        lay.addSpacing(theme.sc(10))
 
         # Shown while _try_resume's background thread is still talking to
         # Firebase, so a saved sign-in taking a moment reads as "working",
         # not as the form just sitting there (or, before this, the window
         # itself going unresponsive — see _try_resume's own comment).
         self._resume_label = QtWidgets.QLabel("Checking saved sign-in…")
-        self._resume_label.setStyleSheet(f"color:{_ACCENT}; font-size:11px;")
+        self._resume_label.setStyleSheet(f"color:{_ACCENT}; font-size:{theme.sc_font(11)}px;")
         self._resume_label.setAlignment(QtCore.Qt.AlignCenter)
         self._resume_label.hide()
         lay.addWidget(self._resume_label)
@@ -687,7 +696,7 @@ class _LoginPage(QtWidgets.QWidget):
 
         # Show Password checkbox
         show_cb = QtWidgets.QCheckBox("Show Password")
-        show_cb.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        show_cb.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         show_cb.toggled.connect(
             lambda on: self.pwd_inp.setEchoMode(
                 QtWidgets.QLineEdit.Normal if on
@@ -696,21 +705,21 @@ class _LoginPage(QtWidgets.QWidget):
 
         # Stay signed in
         self.stay_cb = QtWidgets.QCheckBox("Stay signed in")
-        self.stay_cb.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        self.stay_cb.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         if self._session.get("stay"):
             self.stay_cb.setChecked(True)
         lay.addWidget(self.stay_cb)
 
-        lay.addSpacing(6)
+        lay.addSpacing(theme.sc(6))
 
         # Sign In button
         sign_in_btn = QtWidgets.QPushButton("Sign In")
-        sign_in_btn.setMinimumHeight(36)
+        sign_in_btn.setMinimumHeight(theme.sc(36))
         sign_in_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_ACCENT}; color: {_BG};
-                border: none; border-radius:{theme.R_CTRL}px;
-                font-size: 13px; font-weight: bold;
+                border: none; border-radius:{theme.sc(theme.R_CTRL)}px;
+                font-size: {theme.sc_font(13)}px; font-weight: bold;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
         """)
@@ -721,21 +730,21 @@ class _LoginPage(QtWidgets.QWidget):
         link_row = QtWidgets.QHBoxLayout()
         forgot_btn = QtWidgets.QPushButton("Forgot Password?")
         forgot_btn.setFlat(True)
-        forgot_btn.setMinimumHeight(28)
+        forgot_btn.setMinimumHeight(theme.sc(28))
         forgot_btn.setStyleSheet(
-            f"color:{_MUTED}; font-size:13px; border:none; padding:2px 4px;")
+            f"color:{_MUTED}; font-size:{theme.sc_font(13)}px; border:none; padding:{theme.sc(2)}px {theme.sc(4)}px;")
         forgot_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         forgot_btn.clicked.connect(self._do_forgot)
 
         signup_btn = QtWidgets.QPushButton("Sign Up")
         signup_btn.setFlat(True)
-        signup_btn.setMinimumHeight(28)
+        signup_btn.setMinimumHeight(theme.sc(28))
         signup_btn.setStyleSheet(
-            f"color:{_ACCENT}; font-size:13px; border:none; padding:2px 4px;")
+            f"color:{_ACCENT}; font-size:{theme.sc_font(13)}px; border:none; padding:{theme.sc(2)}px {theme.sc(4)}px;")
         signup_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         signup_btn.clicked.connect(self.go_signup.emit)
 
-        lay.addSpacing(8)          # ← ADD THIS: gap above the row
+        lay.addSpacing(theme.sc(8))          # ← ADD THIS: gap above the row
         link_row.addWidget(forgot_btn)
         link_row.addStretch()
         link_row.addWidget(signup_btn)
@@ -905,7 +914,7 @@ class TermsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Terms & Conditions")
-        self.setFixedSize(540, 480)
+        self.setFixedSize(theme.sc(540), theme.sc(480))
         self.setModal(True)
         self.setWindowFlags(
             QtCore.Qt.Dialog |
@@ -914,26 +923,26 @@ class TermsDialog(QtWidgets.QDialog):
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius:{theme.R_CARD}px;
+                border-radius:{theme.sc(theme.R_CARD)}px;
             }}
             QTextEdit {{
                 background: {_SURFACE};
                 color: {_TEXT};
                 border: 1px solid {_BORDER};
-                border-radius:{theme.R_CTRL}px;
-                padding: 10px;
-                font-size: 12px;
+                border-radius:{theme.sc(theme.R_CTRL)}px;
+                padding: {theme.sc(10)}px;
+                font-size: {theme.sc_font(12)}px;
                 font-family: Consolas;
             }}
             QScrollBar:vertical {{
                 background: {_BG};
-                width: 8px;
-                border-radius:{theme.R_SM}px;
+                width: {theme.sc(8)}px;
+                border-radius:{theme.sc(theme.R_SM)}px;
             }}
             QScrollBar::handle:vertical {{
                 background: {_BORDER};
-                border-radius:{theme.R_SM}px;
-                min-height: 20px;
+                border-radius:{theme.sc(theme.R_SM)}px;
+                min-height: {theme.sc(20)}px;
             }}
             QScrollBar::handle:vertical:hover {{
                 background: {_ACCENT};
@@ -944,19 +953,19 @@ class TermsDialog(QtWidgets.QDialog):
         """)
 
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(24, 20, 24, 20)
-        lay.setSpacing(14)
+        lay.setContentsMargins(theme.sc(24), theme.sc(20), theme.sc(24), theme.sc(20))
+        lay.setSpacing(theme.sc(14))
 
         # ── Header row (title + X close button) ──────────────────────────────
         hdr_row = QtWidgets.QHBoxLayout()
 
         icon_lbl = QtWidgets.QLabel()
-        icon_lbl.setPixmap(theme.icon("clipboard", theme.SLATE, 18).pixmap(18, 18))
+        icon_lbl.setPixmap(theme.icon("clipboard", theme.SLATE, theme.sc(18)).pixmap(theme.sc(18), theme.sc(18)))
         hdr_row.addWidget(icon_lbl)
 
         title_lbl = QtWidgets.QLabel("Terms & Conditions")
         title_lbl.setStyleSheet(
-            f"color: {_ACCENT}; font-size: 15px; font-weight: bold;")
+            f"color: {_ACCENT}; font-size: {theme.sc_font(15)}px; font-weight: bold;")
         hdr_row.addWidget(title_lbl)
         hdr_row.addStretch()       
 
@@ -977,12 +986,12 @@ class TermsDialog(QtWidgets.QDialog):
 
         # ── Close button at bottom ────────────────────────────────────────────
         ok_btn = QtWidgets.QPushButton("Close")
-        ok_btn.setMinimumHeight(34)
+        ok_btn.setMinimumHeight(theme.sc(34))
         ok_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_ACCENT}; color: {_BG};
-                border: none; border-radius:{theme.R_CTRL}px;
-                font-size: 12px; font-weight: bold;
+                border: none; border-radius:{theme.sc(theme.R_CTRL)}px;
+                font-size: {theme.sc_font(12)}px; font-weight: bold;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
         """)
@@ -1019,9 +1028,9 @@ class _SignUpPage(QtWidgets.QWidget):
                 background: {_SURFACE};
                 color: {_TEXT};
                 border: 1.5px solid #1a1a2e;
-                border-radius:{theme.R_CTRL}px;
-                padding: 6px 10px;
-                font-size: 12px;
+                border-radius:{theme.sc(theme.R_CTRL)}px;
+                padding: {theme.sc(6)}px {theme.sc(10)}px;
+                font-size: {theme.sc_font(12)}px;
                 font-family: Consolas;
             }}
             QLineEdit:focus {{
@@ -1030,15 +1039,15 @@ class _SignUpPage(QtWidgets.QWidget):
             }}
         """)
         lay = QtWidgets.QVBoxLayout(inner_widget)
-        lay.setContentsMargins(40, 30, 40, 30)
-        lay.setSpacing(8)
+        lay.setContentsMargins(theme.sc(40), theme.sc(30), theme.sc(40), theme.sc(30))
+        lay.setSpacing(theme.sc(8))
 
         # Title
         title = QtWidgets.QLabel("Create Account")
         title.setStyleSheet(
-            f"color:{_ACCENT}; font-size:20px; font-weight:bold;")
+            f"color:{_ACCENT}; font-size:{theme.sc_font(20)}px; font-weight:bold;")
         lay.addWidget(title)
-        lay.addSpacing(6)
+        lay.addSpacing(theme.sc(6))
 
         self.name_inp    = _labelled_input(lay, "Full Name",    "John Doe")
         self.email_inp   = _labelled_input(lay, "Email",        "your@email.com")
@@ -1048,29 +1057,29 @@ class _SignUpPage(QtWidgets.QWidget):
                                            echo=QtWidgets.QLineEdit.Password)
 
         show_cb = QtWidgets.QCheckBox("Show Password")
-        show_cb.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        show_cb.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         show_cb.toggled.connect(self._toggle_pwd)
         lay.addWidget(show_cb)
-        lay.addSpacing(4)
+        lay.addSpacing(theme.sc(4))
 
         self.inst_inp    = _labelled_input(lay, "Institution",  "Your College / Org")
         self.city_inp    = _labelled_input(lay, "City",         "Bengaluru")
 
         # ── State dropdown (Indian states & UTs) ──────────────────────────────
         state_lbl = QtWidgets.QLabel("State")
-        state_lbl.setStyleSheet(f"color: {_TEXT}; font-size: 13px; font-weight: bold; margin-bottom: 3px;")
+        state_lbl.setStyleSheet(f"color: {_TEXT}; font-size: {theme.sc_font(13)}px; font-weight: bold; margin-bottom: {theme.sc(3)}px;")
         lay.addWidget(state_lbl)
 
         self.state_inp = QtWidgets.QComboBox()
-        self.state_inp.setMinimumHeight(38)
+        self.state_inp.setMinimumHeight(theme.sc(38))
         self.state_inp.setStyleSheet(f"""
             QComboBox {{
                 background: {_SURFACE};
                 color: {_TEXT};
                 border: 1.5px solid #1a1a2e;
-                border-radius:{theme.R_CTRL}px;
-                padding: 6px 10px;
-                font-size: 14px;
+                border-radius:{theme.sc(theme.R_CTRL)}px;
+                padding: {theme.sc(6)}px {theme.sc(10)}px;
+                font-size: {theme.sc_font(14)}px;
                 font-family: Consolas;
             }}
             QComboBox:focus {{
@@ -1083,18 +1092,18 @@ class _SignUpPage(QtWidgets.QWidget):
                 selection-background-color: {_ACCENT};
                 selection-color: {_BG};
                 border: 1px solid {_BORDER};
-                font-size: 13px;
+                font-size: {theme.sc_font(13)}px;
             }}
             QComboBox::drop-down {{
                 border: none;
-                width: 24px;
+                width: {theme.sc(24)}px;
             }}
             QComboBox::down-arrow {{
                 image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 7px solid {_ACCENT};
-                margin-right: 8px;
+                border-left: {theme.sc(5)}px solid transparent;
+                border-right: {theme.sc(5)}px solid transparent;
+                border-top: {theme.sc(7)}px solid {_ACCENT};
+                margin-right: {theme.sc(8)}px;
             }}
         """)
         _INDIA_STATES = [
@@ -1126,16 +1135,16 @@ class _SignUpPage(QtWidgets.QWidget):
             "The licence key emailed to you when your CubeSat order was confirmed.\n"
             "It only works with the email address the order was placed with.")
         _hint = QtWidgets.QLabel("Sent to your order email when your CubeSat shipped.")
-        _hint.setStyleSheet(f"color:{_MUTED}; font-size:10px;")
+        _hint.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(10)}px;")
         lay.addWidget(_hint)
 
         # Terms checkbox row — checkbox + "I agree to the" + clickable link
         terms_row = QtWidgets.QHBoxLayout()
-        terms_row.setSpacing(4)
+        terms_row.setSpacing(theme.sc(4))
         terms_row.setContentsMargins(0, 0, 0, 0)
 
         self.agree_cb = QtWidgets.QCheckBox("I agree to the")
-        self.agree_cb.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        self.agree_cb.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         self.agree_cb.toggled.connect(
             lambda on: self.signup_btn.setEnabled(on))
         terms_row.addWidget(self.agree_cb)
@@ -1146,13 +1155,13 @@ class _SignUpPage(QtWidgets.QWidget):
         terms_link.setStyleSheet(f"""
             QPushButton {{
                 color: {_ACCENT};
-                font-size: 11px;
+                font-size: {theme.sc_font(11)}px;
                 border: none;
-                padding: 0px;
-                margin: 0px;
+                padding: {theme.sc(0)}px;
+                margin: {theme.sc(0)}px;
                 text-decoration: underline;
                 background: transparent;
-                min-width: 0px;
+                min-width: {theme.sc(0)}px;
             }}
             QPushButton:hover {{ color: {_ACCENT}; }}
         """)
@@ -1161,17 +1170,17 @@ class _SignUpPage(QtWidgets.QWidget):
         terms_row.addStretch()
 
         lay.addLayout(terms_row)
-        lay.addSpacing(6)
+        lay.addSpacing(theme.sc(6))
 
         # Sign Up button
         self.signup_btn = QtWidgets.QPushButton("Sign Up")
-        self.signup_btn.setMinimumHeight(36)
+        self.signup_btn.setMinimumHeight(theme.sc(36))
         self.signup_btn.setEnabled(False)
         self.signup_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_ACCENT}; color: {_BG};
-                border: none; border-radius:{theme.R_CTRL}px;
-                font-size: 13px; font-weight: bold;
+                border: none; border-radius:{theme.sc(theme.R_CTRL)}px;
+                font-size: {theme.sc_font(13)}px; font-weight: bold;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
             QPushButton:disabled {{
@@ -1185,7 +1194,7 @@ class _SignUpPage(QtWidgets.QWidget):
         back_btn = QtWidgets.QPushButton("← Back to Login")
         back_btn.setFlat(True)
         back_btn.setStyleSheet(
-            f"color:{_MUTED}; font-size:11px; border:none; padding:4px 0;")
+            f"color:{_MUTED}; font-size:{theme.sc_font(11)}px; border:none; padding:{theme.sc(4)}px 0;")
         back_btn.setCursor(QtGui.QCursor(QtCore.Qt.PointingHandCursor))
         back_btn.clicked.connect(self.go_login.emit)
         lay.addWidget(back_btn)
@@ -1326,25 +1335,25 @@ class _ComPortPage(QtWidgets.QWidget):
 
     def _build(self):
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(40, 40, 40, 40)
-        lay.setSpacing(14)
+        lay.setContentsMargins(theme.sc(40), theme.sc(40), theme.sc(40), theme.sc(40))
+        lay.setSpacing(theme.sc(14))
         lay.addStretch(1)
 
         icon = QtWidgets.QLabel()
         icon.setAlignment(QtCore.Qt.AlignCenter)
-        icon.setPixmap(theme.icon("antenna", theme.TEAL, 40).pixmap(40, 40))
+        icon.setPixmap(theme.icon("antenna", theme.TEAL, theme.sc(40)).pixmap(theme.sc(40), theme.sc(40)))
         lay.addWidget(icon)
 
         title = QtWidgets.QLabel("SELECT COM PORT")
         title.setAlignment(QtCore.Qt.AlignCenter)
         title.setStyleSheet(
-            f"color:{_ACCENT}; font-size:16px; font-weight:bold;"
-            f" letter-spacing:2px;")
+            f"color:{_ACCENT}; font-size:{theme.sc_font(16)}px; font-weight:bold;"
+            f" letter-spacing:{theme.sc(2)}px;")
         lay.addWidget(title)
 
         sub = QtWidgets.QLabel("Connect the Ground Station serial interface")
         sub.setAlignment(QtCore.Qt.AlignCenter)
-        sub.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        sub.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         lay.addWidget(sub)
 
         # Divider
@@ -1356,10 +1365,10 @@ class _ComPortPage(QtWidgets.QWidget):
         # Port row
         port_row = QtWidgets.QHBoxLayout()
         port_lbl = QtWidgets.QLabel("Port:")
-        port_lbl.setStyleSheet(f"color:{_MUTED}; font-size:12px;")
-        port_lbl.setFixedWidth(36)
+        port_lbl.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(12)}px;")
+        port_lbl.setFixedWidth(theme.sc(36))
         self.combo = QtWidgets.QComboBox()
-        self.combo.setMinimumHeight(32)
+        self.combo.setMinimumHeight(theme.sc(32))
         port_row.addWidget(port_lbl)
         port_row.addWidget(self.combo)
         lay.addLayout(port_row)
@@ -1371,9 +1380,9 @@ class _ComPortPage(QtWidgets.QWidget):
         connect_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_ACCENT}; color: {_BG};
-                border: 1px solid {_ACCENT}; padding: 6px 18px;
-                border-radius:{theme.R_CTRL}px; font-size: 12px;
-                font-weight: bold; min-width: 80px;
+                border: 1px solid {_ACCENT}; padding: {theme.sc(6)}px {theme.sc(18)}px;
+                border-radius:{theme.sc(theme.R_CTRL)}px; font-size: {theme.sc_font(12)}px;
+                font-weight: bold; min-width: {theme.sc(80)}px;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
         """)
@@ -1390,17 +1399,17 @@ class _ComPortPage(QtWidgets.QWidget):
             "It is included with APEX GCS.")
         self._driver_hint.setAlignment(QtCore.Qt.AlignCenter)
         self._driver_hint.setWordWrap(True)
-        self._driver_hint.setStyleSheet(f"color:{_MUTED}; font-size:10px;")
+        self._driver_hint.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(10)}px;")
         self._driver_hint.hide()
         lay.addWidget(self._driver_hint)
 
         self._driver_btn = _icon_btn("Install USB Driver", "download")
-        self._driver_btn.setMinimumHeight(30)
+        self._driver_btn.setMinimumHeight(theme.sc(30))
         self._driver_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_SURFACE}; color: {_TEXT};
-                border: 1px solid {_BORDER}; border-radius:{theme.R_CTRL}px;
-                font-size: 11px;
+                border: 1px solid {_BORDER}; border-radius:{theme.sc(theme.R_CTRL)}px;
+                font-size: {theme.sc_font(11)}px;
             }}
             QPushButton:hover {{ border-color: {_ACCENT}; color: {_ACCENT}; }}
         """)
@@ -1495,20 +1504,23 @@ class _SplashPage(QtWidgets.QWidget):
         outer.addWidget(self._signing_widget)
         lay = QtWidgets.QVBoxLayout(self._signing_widget)
         lay.setAlignment(QtCore.Qt.AlignCenter)
-        lay.setSpacing(16)
+        lay.setSpacing(theme.sc(16))
 
         logo = QtWidgets.QLabel()
         logo.setAlignment(QtCore.Qt.AlignCenter)
-        logo.setFixedSize(220, 220)
+        side = theme.sc(220)
+        logo.setFixedSize(side, side)
+        logo.setScaledContents(True)
         self._movie = QtGui.QMovie(SIGNIN_ANIMATION)
-        self._movie.setScaledSize(QtCore.QSize(220, 220))
+        ratio = theme.device_ratio()
+        self._movie.setScaledSize(QtCore.QSize(int(side * ratio), int(side * ratio)))
         logo.setMovie(self._movie)
         self._movie.start()
         lay.addWidget(logo)
 
         msg = QtWidgets.QLabel("Signing you in…")
         msg.setAlignment(QtCore.Qt.AlignCenter)
-        msg.setStyleSheet(f"color:{_MUTED}; font-size:12px; letter-spacing:1px;")
+        msg.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(12)}px; letter-spacing:{theme.sc_font(1)}px;")
         lay.addWidget(msg)
 
     def set_online(self, online: bool):
@@ -1551,19 +1563,18 @@ class _OpeningPage(QtWidgets.QWidget):
         super().__init__()
         lay = QtWidgets.QVBoxLayout(self)
         lay.setAlignment(QtCore.Qt.AlignCenter)
-        lay.setSpacing(16)
+        lay.setSpacing(theme.sc(16))
 
         logo = QtWidgets.QLabel()
         logo.setAlignment(QtCore.Qt.AlignCenter)
-        pix = QtGui.QPixmap(OPENING_STATION_IMAGE).scaled(
-            QtCore.QSize(220, 220), QtCore.Qt.KeepAspectRatio,
-            QtCore.Qt.SmoothTransformation)
+        side = theme.sc(220)
+        pix = theme.scaled_pixmap(QtGui.QPixmap(OPENING_STATION_IMAGE), side, side)
         logo.setPixmap(pix)
         lay.addWidget(logo)
 
         msg = QtWidgets.QLabel("Opening Ground Control Station…")
         msg.setAlignment(QtCore.Qt.AlignCenter)
-        msg.setStyleSheet(f"color:{_MUTED}; font-size:12px; letter-spacing:1px;")
+        msg.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(12)}px; letter-spacing:{theme.sc_font(1)}px;")
         lay.addWidget(msg)
 
 
@@ -1589,7 +1600,7 @@ class LoginWindow(QtWidgets.QDialog):
         self._session: dict = _load_session()
 
         self.setWindowTitle("Login")
-        self.setFixedSize(960, 620)
+        self.setFixedSize(theme.sc(960), theme.sc(620))
         self.setWindowFlags(
             QtCore.Qt.Dialog |
             QtCore.Qt.WindowCloseButtonHint)
@@ -1597,7 +1608,7 @@ class LoginWindow(QtWidgets.QDialog):
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius:{theme.R_CARD}px;
+                border-radius:{theme.sc(theme.R_CARD)}px;
             }}
         """)
 
@@ -1621,7 +1632,7 @@ class LoginWindow(QtWidgets.QDialog):
         # were pinned at 580 against a 620px window, which left a 40px band of
         # flat black under the logo with a visible seam across it — on the
         # first screen of the product.
-        panel_w, panel_h = 340, self.height()
+        panel_w, panel_h = theme.sc(340), self.height()
 
         left = QtWidgets.QLabel()
         left.setFixedWidth(panel_w)
@@ -1640,7 +1651,7 @@ class LoginWindow(QtWidgets.QDialog):
         # Light, because the starfield underneath is the point now.
         left_overlay.setStyleSheet("background: rgba(0,0,0,0.35);")
         ov_lay = QtWidgets.QVBoxLayout(left_overlay)
-        ov_lay.setContentsMargins(12, 20, 12, 16)
+        ov_lay.setContentsMargins(theme.sc(12), theme.sc(20), theme.sc(12), theme.sc(16))
         ov_lay.setSpacing(0)
 
         # Station name — top, centred, large distinct font
@@ -1651,15 +1662,12 @@ class LoginWindow(QtWidgets.QDialog):
             QtWidgets.QSizePolicy.Expanding)
         title_pix = QtGui.QPixmap(title)
         if not title_pix.isNull():
-            title_pix = title_pix.scaled(
-                310, 360,
-                QtCore.Qt.KeepAspectRatio,
-                QtCore.Qt.SmoothTransformation)
+            title_pix = theme.scaled_pixmap(title_pix, theme.sc(310), theme.sc(360))
             title_lbl.setPixmap(title_pix)
         ov_lay.addWidget(title_lbl, stretch=1)
         
 
-        """ov_lay.addSpacing(10)"""
+        """ov_lay.addSpacing(theme.sc(10))"""
 
         # Logo — fills all remaining space below the title
         logo_lbl = QtWidgets.QLabel()
@@ -1669,10 +1677,7 @@ class LoginWindow(QtWidgets.QDialog):
             QtWidgets.QSizePolicy.Expanding)
         logo_pix = QtGui.QPixmap(APEX_LOGO)
         if not logo_pix.isNull():
-            logo_pix = logo_pix.scaled(
-                310, 360,
-                QtCore.Qt.KeepAspectRatio,
-                QtCore.Qt.SmoothTransformation)
+            logo_pix = theme.scaled_pixmap(logo_pix, theme.sc(310), theme.sc(360))
             logo_lbl.setPixmap(logo_pix)
         ov_lay.addWidget(logo_lbl, stretch=1)
 
@@ -1799,38 +1804,38 @@ class ComPortSelector(QtWidgets.QDialog):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("APEX Ground Control Station")
-        self.setFixedSize(420, 280)
+        self.setFixedSize(theme.sc(420), theme.sc(280))
         self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background-color: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius:{theme.R_CARD}px;
+                border-radius:{theme.sc(theme.R_CARD)}px;
             }}
         """)
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(30, 24, 30, 24)
-        root.setSpacing(16)
+        root.setContentsMargins(theme.sc(30), theme.sc(24), theme.sc(30), theme.sc(24))
+        root.setSpacing(theme.sc(16))
 
         # ── Header ────────────────────────────────────────────────────────────
         icon_lbl = QtWidgets.QLabel()
         icon_lbl.setAlignment(QtCore.Qt.AlignCenter)
-        icon_lbl.setPixmap(theme.icon("antenna", theme.TEAL, 34).pixmap(34, 34))
+        icon_lbl.setPixmap(theme.icon("antenna", theme.TEAL, theme.sc(34)).pixmap(theme.sc(34), theme.sc(34)))
         root.addWidget(icon_lbl)
 
         title = QtWidgets.QLabel("SELECT COM PORT")
         title.setAlignment(QtCore.Qt.AlignCenter)
         title.setStyleSheet(f"""
             color: {_ACCENT};
-            font-size: 16px;
+            font-size: {theme.sc_font(16)}px;
             font-weight: bold;
-            letter-spacing: 2px;
+            letter-spacing: {theme.sc(2)}px;
         """)
         root.addWidget(title)
 
         sub = QtWidgets.QLabel("Connect to the Ground Station serial interface")
         sub.setAlignment(QtCore.Qt.AlignCenter)
-        sub.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        sub.setStyleSheet(f"color: {_MUTED}; font-size: {theme.sc_font(11)}px;")
         root.addWidget(sub)
 
         # ── Divider ───────────────────────────────────────────────────────────
@@ -1842,10 +1847,10 @@ class ComPortSelector(QtWidgets.QDialog):
         # ── Port selector ─────────────────────────────────────────────────────
         port_row = QtWidgets.QHBoxLayout()
         port_lbl = QtWidgets.QLabel("Port:")
-        port_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 12px;")
-        port_lbl.setFixedWidth(36)
+        port_lbl.setStyleSheet(f"color: {_MUTED}; font-size: {theme.sc_font(12)}px;")
+        port_lbl.setFixedWidth(theme.sc(36))
         self.combo = QtWidgets.QComboBox()
-        self.combo.setMinimumHeight(32)
+        self.combo.setMinimumHeight(theme.sc(32))
         port_row.addWidget(port_lbl)
         port_row.addWidget(self.combo)
         root.addLayout(port_row)
@@ -1854,7 +1859,7 @@ class ComPortSelector(QtWidgets.QDialog):
 
         # ── Buttons ───────────────────────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
-        btn_row.setSpacing(10)
+        btn_row.setSpacing(theme.sc(10))
 
         refresh_btn = _icon_btn("Refresh", "refresh")
         connect_btn = _icon_btn("Connect", "plug", _BG)
@@ -1863,11 +1868,11 @@ class ComPortSelector(QtWidgets.QDialog):
                 background: {_ACCENT};
                 color: {_BG};
                 border: 1px solid {_ACCENT};
-                padding: 6px 18px;
-                border-radius:{theme.R_CTRL}px;
-                font-size: 12px;
+                padding: {theme.sc(6)}px {theme.sc(18)}px;
+                border-radius:{theme.sc(theme.R_CTRL)}px;
+                font-size: {theme.sc_font(12)}px;
                 font-weight: bold;
-                min-width: 80px;
+                min-width: {theme.sc(80)}px;
             }}
             QPushButton:hover {{
                 background: {theme.GRADIENT_COOL};
@@ -1912,12 +1917,12 @@ class Toast(QtWidgets.QFrame):
             QFrame {{
                 background-color: {_RAISED};
                 border: 1px solid {edge};
-                border-radius:{theme.R_CARD}px;
+                border-radius:{theme.sc(theme.R_CARD)}px;
             }}
             QLabel {{
                 color: {_TEXT};
-                font-size: {theme.FS_BODY}px;
-                padding: 11px 15px;
+                font-size: {theme.sc_font(theme.FS_BODY)}px;
+                padding: {theme.sc(11)}px {theme.sc(15)}px;
             }}
         """)
 
@@ -1925,7 +1930,7 @@ class Toast(QtWidgets.QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
 
         dot = QtWidgets.QLabel("●")
-        dot.setStyleSheet(f"color: {edge}; padding-left: 14px; padding-right: 2px;")
+        dot.setStyleSheet(f"color: {edge}; padding-left: {theme.sc(14)}px; padding-right: {theme.sc(2)}px;")
         layout.addWidget(dot)
         layout.addWidget(QtWidgets.QLabel(text))
 
@@ -2001,7 +2006,7 @@ class PixieBubble(QtWidgets.QFrame):
         self._anchor = anchor
         edge = self._EDGE.get(kind, _ACCENT)
 
-        w = self._DISPLAY_W
+        w = theme.sc(self._DISPLAY_W)
         h = round(w * self._base_pixmap().height() / self._base_pixmap().width())
         self._pix = self._tinted(edge, w, h)
         self.setFixedSize(w, h)
@@ -2014,7 +2019,7 @@ class PixieBubble(QtWidgets.QFrame):
         label.setWordWrap(True)
         label.setAlignment(QtCore.Qt.AlignCenter)
         label.setStyleSheet(
-            f"color: {_TEXT}; font-size: {theme.FS_BODY}px; background: transparent;")
+            f"color: {_TEXT}; font-size: {theme.sc_font(theme.FS_BODY)}px; background: transparent;")
         label.setGeometry(text_rect)
 
         self._fx = QtWidgets.QGraphicsOpacityEffect(self)
@@ -2067,8 +2072,7 @@ class PixieBubble(QtWidgets.QFrame):
         if hit is not None:
             return hit
 
-        ratio = QtWidgets.QApplication.instance().devicePixelRatio() \
-            if QtWidgets.QApplication.instance() else 1.0
+        ratio = theme.device_ratio()
         scaled = cls._base_pixmap().scaled(
             int(w * ratio), int(h * ratio),
             QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
@@ -2237,27 +2241,27 @@ class UpdateNotesDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Update Available")
         self.setModal(True)
-        self.setFixedWidth(self._WIDTH)
+        self.setFixedWidth(theme.sc(self._WIDTH))
         self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background-color: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius:{theme.R_CARD}px;
+                border-radius:{theme.sc(theme.R_CARD)}px;
             }}
         """)
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(32, 28, 32, 24)
-        root.setSpacing(16)
+        root.setContentsMargins(theme.sc(32), theme.sc(28), theme.sc(32), theme.sc(24))
+        root.setSpacing(theme.sc(16))
 
         # ── Icon + title row ─────────────────────────────────────────────
         hdr = QtWidgets.QHBoxLayout()
         icon_lbl = QtWidgets.QLabel()
-        icon_lbl.setPixmap(theme.icon("info", _ACCENT, 28).pixmap(28, 28))
-        icon_lbl.setFixedWidth(40)
+        icon_lbl.setPixmap(theme.icon("info", _ACCENT, theme.sc(28)).pixmap(theme.sc(28), theme.sc(28)))
+        icon_lbl.setFixedWidth(theme.sc(40))
         title_lbl = QtWidgets.QLabel("Update Available")
         title_lbl.setStyleSheet(
-            f"color:{_ACCENT}; font-size:17px; font-weight:bold;")
+            f"color:{_ACCENT}; font-size:{theme.sc_font(17)}px; font-weight:bold;")
         hdr.addWidget(icon_lbl)
         hdr.addWidget(title_lbl)
         hdr.addStretch()
@@ -2270,12 +2274,12 @@ class UpdateNotesDialog(QtWidgets.QDialog):
 
         ver_lbl = QtWidgets.QLabel(
             f"Current: v{current_version}    →    Latest: v{latest_version}")
-        ver_lbl.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY + 1}px;")
+        ver_lbl.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(theme.FS_BODY + 1)}px;")
         root.addWidget(ver_lbl)
 
         notes_title = QtWidgets.QLabel("WHAT'S NEW")
         notes_title.setStyleSheet(
-            f"color:{_MUTED}; font-size:11px; font-weight:bold; letter-spacing:1px;")
+            f"color:{_MUTED}; font-size:{theme.sc_font(11)}px; font-weight:bold; letter-spacing:{theme.sc_font(1)}px;")
         root.addWidget(notes_title)
 
         # QTextEdit, not QLabel: release notes are markdown (GitHub renders
@@ -2290,7 +2294,7 @@ class UpdateNotesDialog(QtWidgets.QDialog):
         self._notes_view.setStyleSheet(f"""
             QTextEdit {{
                 background: transparent; color:{_TEXT};
-                font-size:{theme.FS_BODY + 1}px; border: none;
+                font-size:{theme.sc_font(theme.FS_BODY + 1)}px; border: none;
             }}
         """)
         if notes.strip():
@@ -2324,7 +2328,7 @@ class UpdateNotesDialog(QtWidgets.QDialog):
                 border: none;
                 font-family: "{theme.DISPLAY}";
                 font-weight: 700;
-                padding: 11px 20px;
+                padding: {theme.sc(11)}px {theme.sc(20)}px;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
         """)
@@ -2334,10 +2338,10 @@ class UpdateNotesDialog(QtWidgets.QDialog):
         root.addLayout(btn_row)
 
         # ── Auto-size to the notes' rendered height ─────────────────────
-        content_w = self._WIDTH - 64   # inside the 32px side margins
+        content_w = theme.sc(self._WIDTH) - theme.sc(64)   # inside the 32px side margins
         self._notes_view.document().setTextWidth(content_w)
         doc_h = self._notes_view.document().size().height()
-        notes_h = max(self._MIN_NOTES_H, min(self._MAX_NOTES_H, int(doc_h) + 12))
+        notes_h = max(theme.sc(self._MIN_NOTES_H), min(theme.sc(self._MAX_NOTES_H), int(doc_h) + theme.sc(12)))
         self._notes_view.setFixedHeight(notes_h)
         self.adjustSize()
 
@@ -2360,12 +2364,12 @@ class UpdateDownloadDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Downloading Update")
         self.setModal(True)
-        self.setFixedWidth(440)
+        self.setFixedWidth(theme.sc(440))
         self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background-color: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius: {theme.R_CARD}px;
+                border-radius: {theme.sc(theme.R_CARD)}px;
             }}
         """)
 
@@ -2374,8 +2378,8 @@ class UpdateDownloadDialog(QtWidgets.QDialog):
         self._done_path = None
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 20)
-        root.setSpacing(14)
+        root.setContentsMargins(theme.sc(28), theme.sc(24), theme.sc(28), theme.sc(20))
+        root.setSpacing(theme.sc(14))
 
         # Pixie, looping silently for as long as the dialog is open — the
         # download itself has no notion of visual progress worth animating
@@ -2388,29 +2392,38 @@ class UpdateDownloadDialog(QtWidgets.QDialog):
         # no codec available) — not something to risk on a customer's PC
         # with unknown codecs installed. GIF decodes through Qt's own
         # built-in image plugin, no OS codec dependency at all.
-        video_h = round(self._VIDEO_W * 9 / 16)
-        self._video = _RoundedMovieLabel(theme.R_CARD)
-        self._video.setFixedSize(self._VIDEO_W, video_h)
+        video_w = theme.sc(self._VIDEO_W)
+        video_h = round(video_w * 9 / 16)
+        self._video = _RoundedMovieLabel(theme.sc(theme.R_CARD))
+        self._video.setFixedSize(video_w, video_h)
         root.addWidget(self._video, alignment=QtCore.Qt.AlignHCenter)
 
         self._movie = QtGui.QMovie(DOWNLOAD_ANIMATION)
-        self._movie.setScaledSize(QtCore.QSize(self._VIDEO_W, video_h))
+        # Decoded at the screen's real pixel density, not the label's
+        # logical size — _RoundedMovieLabel.paintEvent() draws each frame
+        # into self.rect() through a widget-bound painter, which already
+        # scales correctly for devicePixelRatio; what it draws FROM still
+        # needs the extra resolution to downsample from, or every frame is
+        # only ever video_w x video_h real pixels stretched onto however
+        # many physical pixels the screen actually has.
+        ratio = theme.device_ratio()
+        self._movie.setScaledSize(QtCore.QSize(int(video_w * ratio), int(video_h * ratio)))
         self._video.setMovie(self._movie)
         self._movie.start()
 
         title_lbl = QtWidgets.QLabel(f"Downloading APEX GCS v{version}…")
         title_lbl.setStyleSheet(
-            f"color: {theme.CREAM}; font-size: {theme.FS_BODY}px; font-weight: 600;")
+            f"color: {theme.CREAM}; font-size: {theme.sc_font(theme.FS_BODY)}px; font-weight: 600;")
         root.addWidget(title_lbl)
 
         self._bar = QtWidgets.QProgressBar()
         self._bar.setRange(0, 0)   # indeterminate until Content-Length is known
         self._bar.setTextVisible(False)
-        self._bar.setFixedHeight(10)
+        self._bar.setFixedHeight(theme.sc(10))
         root.addWidget(self._bar)
 
         self._status = QtWidgets.QLabel("Starting download…")
-        self._status.setStyleSheet(f"color: {theme.SLATE}; font-size: {theme.FS_LABEL}px;")
+        self._status.setStyleSheet(f"color: {theme.SLATE}; font-size: {theme.sc_font(theme.FS_LABEL)}px;")
         root.addWidget(self._status)
 
         row = QtWidgets.QHBoxLayout()
@@ -2437,7 +2450,7 @@ class UpdateDownloadDialog(QtWidgets.QDialog):
                 border: none;
                 font-family: "{theme.DISPLAY}";
                 font-weight: 700;
-                padding: 11px 20px;
+                padding: {theme.sc(11)}px {theme.sc(20)}px;
             }}
             QPushButton:hover {{ background: {theme.GRADIENT_COOL}; }}
             QPushButton:disabled {{ background: {theme.LINE}; color: {theme.DISABLED}; }}
@@ -2610,34 +2623,34 @@ class ThemedMessageBox(QtWidgets.QDialog):
 
         self.setWindowTitle(title)
         self.setModal(True)
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(theme.sc(420))
         # Word wrap on the labels below only takes effect once something
         # constrains the width. Without a maximum, a long informative string —
         # a full save path, a stack-trace message — produced one unbroken line
         # and a dialog wider than the screen.
-        self.setMaximumWidth(580)
+        self.setMaximumWidth(theme.sc(580))
         self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background-color: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius:{theme.R_CARD}px;
+                border-radius:{theme.sc(theme.R_CARD)}px;
             }}
         """)
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 20)
-        root.setSpacing(14)
+        root.setContentsMargins(theme.sc(28), theme.sc(24), theme.sc(28), theme.sc(20))
+        root.setSpacing(theme.sc(14))
 
         # ── Icon + title row ──────────────────────────────────────────────────
         icon_name, icon_color = self._ICONS.get(kind, ("info", _ACCENT))
         hdr = QtWidgets.QHBoxLayout()
         icon_lbl = QtWidgets.QLabel()
-        icon_lbl.setPixmap(theme.icon(icon_name, icon_color, 26).pixmap(26, 26))
-        icon_lbl.setStyleSheet("margin-right: 10px;")
-        icon_lbl.setFixedWidth(38)
+        icon_lbl.setPixmap(theme.icon(icon_name, icon_color, theme.sc(26)).pixmap(theme.sc(26), theme.sc(26)))
+        icon_lbl.setStyleSheet(f"margin-right: {theme.sc(10)}px;")
+        icon_lbl.setFixedWidth(theme.sc(38))
         title_lbl = QtWidgets.QLabel(title)
         title_lbl.setStyleSheet(
-            f"color: {_ACCENT}; font-size: 15px; font-weight: bold;"
+            f"color: {_ACCENT}; font-size: {theme.sc_font(15)}px; font-weight: bold;"
         )
         hdr.addWidget(icon_lbl)
         hdr.addWidget(title_lbl)
@@ -2653,13 +2666,13 @@ class ThemedMessageBox(QtWidgets.QDialog):
         # ── Main text ─────────────────────────────────────────────────────────
         msg_lbl = QtWidgets.QLabel(text)
         msg_lbl.setWordWrap(True)
-        msg_lbl.setStyleSheet(f"color: {_TEXT}; font-size: {theme.FS_BODY}px;")
+        msg_lbl.setStyleSheet(f"color: {_TEXT}; font-size: {theme.sc_font(theme.FS_BODY)}px;")
         root.addWidget(msg_lbl)
 
         if informative:
             info_lbl = QtWidgets.QLabel(informative)
             info_lbl.setWordWrap(True)
-            info_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 12px;")
+            info_lbl.setStyleSheet(f"color: {_MUTED}; font-size: {theme.sc_font(12)}px;")
             root.addWidget(info_lbl)
 
         # ── Buttons ───────────────────────────────────────────────────────────
@@ -2763,7 +2776,7 @@ class _MyBackupsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("APEX GCS — My Backups")
-        self.setMinimumSize(720, 460)
+        self.setMinimumSize(theme.sc(720), theme.sc(460))
         self.setModal(True)
         self.setStyleSheet(_base_style())
         self._files = []
@@ -2775,20 +2788,20 @@ class _MyBackupsDialog(QtWidgets.QDialog):
 
     def _build(self):
         lay = QtWidgets.QVBoxLayout(self)
-        lay.setContentsMargins(20, 18, 20, 18)
-        lay.setSpacing(10)
+        lay.setContentsMargins(theme.sc(20), theme.sc(18), theme.sc(20), theme.sc(18))
+        lay.setSpacing(theme.sc(10))
 
         title = QtWidgets.QLabel("My Backups")
-        title.setStyleSheet(f"color:{_ACCENT}; font-size:18px; font-weight:bold;")
+        title.setStyleSheet(f"color:{_ACCENT}; font-size:{theme.sc_font(18)}px; font-weight:bold;")
         lay.addWidget(title)
 
         self._subtitle = QtWidgets.QLabel("Loading…")
-        self._subtitle.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        self._subtitle.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         lay.addWidget(self._subtitle)
 
         self._all_cb = QtWidgets.QCheckBox("Select all")
         self._all_cb.setChecked(True)
-        self._all_cb.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        self._all_cb.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         self._all_cb.clicked.connect(self._toggle_all)
         lay.addWidget(self._all_cb)
 
@@ -2800,15 +2813,15 @@ class _MyBackupsDialog(QtWidgets.QDialog):
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.setSortingEnabled(True)
         self._table.horizontalHeader().setSortIndicator(4, QtCore.Qt.DescendingOrder)
-        self._table.setColumnWidth(0, 30)
-        self._table.setColumnWidth(1, 280)
-        self._table.setColumnWidth(2, 130)
-        self._table.setColumnWidth(3, 80)
+        self._table.setColumnWidth(0, theme.sc(30))
+        self._table.setColumnWidth(1, theme.sc(280))
+        self._table.setColumnWidth(2, theme.sc(130))
+        self._table.setColumnWidth(3, theme.sc(80))
         self._table.setStyleSheet(f"""
             QTableWidget {{ background:{_BG}; color:{_TEXT}; gridline-color:{_BORDER};
-                            border:1px solid {_BORDER}; border-radius:{theme.R_CTRL}px; font-size:11px; }}
+                            border:1px solid {_BORDER}; border-radius:{theme.sc(theme.R_CTRL)}px; font-size:{theme.sc_font(11)}px; }}
             QHeaderView::section {{ background:{_SURFACE}; color:{_MUTED}; border:none;
-                                    padding:6px; font-size:10px; }}
+                                    padding:{theme.sc(6)}px; font-size:{theme.sc_font(10)}px; }}
             QTableWidget::item:selected {{ background:{_ACCENT}; color:{_BG}; }}
         """)
         self._table.doubleClicked.connect(self._open_selected)
@@ -2816,12 +2829,12 @@ class _MyBackupsDialog(QtWidgets.QDialog):
 
         row = QtWidgets.QHBoxLayout()
         self._dl_btn = QtWidgets.QPushButton("Download Selected")
-        self._dl_btn.setMinimumHeight(32)
+        self._dl_btn.setMinimumHeight(theme.sc(32))
         self._dl_btn.clicked.connect(self._download_checked)
         row.addWidget(self._dl_btn)
 
         self._del_btn = QtWidgets.QPushButton("Delete Selected")
-        self._del_btn.setMinimumHeight(34)
+        self._del_btn.setMinimumHeight(theme.sc(34))
         # Was a third hardcoded red, built from a mix of plain and f-strings
         # so half the placeholders never interpolated. The shared danger rule
         # in theme.qss() covers it.
@@ -3120,7 +3133,7 @@ class UserProfileDialog(QtWidgets.QDialog):
         self._email = email
 
         self.setWindowTitle("User Profile")
-        self.setFixedSize(420, 520)
+        self.setFixedSize(theme.sc(420), theme.sc(520))
         self.setModal(True)
         self.setWindowFlags(
             QtCore.Qt.Dialog | QtCore.Qt.WindowCloseButtonHint)
@@ -3128,20 +3141,20 @@ class UserProfileDialog(QtWidgets.QDialog):
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius:{theme.R_CARD}px;
+                border-radius:{theme.sc(theme.R_CARD)}px;
             }}
             QFrame#profileCard {{
                 background: {_SURFACE};
                 border: 1px solid {_BORDER};
-                border-radius:{theme.R_CARD}px;
+                border-radius:{theme.sc(theme.R_CARD)}px;
             }}
             QLabel#fieldKey {{
                 color: {_MUTED};
-                font-size: 11px;
+                font-size: {theme.sc_font(11)}px;
             }}
             QLabel#fieldVal {{
                 color: {_TEXT};
-                font-size: 13px;
+                font-size: {theme.sc_font(13)}px;
                 font-weight: bold;
             }}
         """)
@@ -3152,21 +3165,21 @@ class UserProfileDialog(QtWidgets.QDialog):
     # ── Layout ────────────────────────────────────────────────────────────────
     def _build(self):
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 20)
-        root.setSpacing(14)
+        root.setContentsMargins(theme.sc(24), theme.sc(20), theme.sc(24), theme.sc(20))
+        root.setSpacing(theme.sc(14))
 
         # ── Header ────────────────────────────────────────────────────────────
         hdr = QtWidgets.QHBoxLayout()
         avatar = QtWidgets.QLabel()
-        avatar.setPixmap(theme.icon("user", theme.SLATE, 26).pixmap(26, 26))
+        avatar.setPixmap(theme.icon("user", theme.SLATE, theme.sc(26)).pixmap(theme.sc(26), theme.sc(26)))
         hdr.addWidget(avatar)
 
         title_col = QtWidgets.QVBoxLayout()
         title_lbl = QtWidgets.QLabel("User Profile")
         title_lbl.setStyleSheet(
-            f"color: {_ACCENT}; font-size: 15px; font-weight: bold;")
+            f"color: {_ACCENT}; font-size: {theme.sc_font(15)}px; font-weight: bold;")
         email_lbl = QtWidgets.QLabel(self._email)
-        email_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        email_lbl.setStyleSheet(f"color: {_MUTED}; font-size: {theme.sc_font(11)}px;")
         title_col.addWidget(title_lbl)
         title_col.addWidget(email_lbl)
         hdr.addLayout(title_col)
@@ -3183,7 +3196,7 @@ class UserProfileDialog(QtWidgets.QDialog):
         card = QtWidgets.QFrame()
         card.setObjectName("profileCard")
         card_lay = QtWidgets.QGridLayout(card)
-        card_lay.setContentsMargins(16, 12, 16, 12)
+        card_lay.setContentsMargins(theme.sc(16), theme.sc(12), theme.sc(16), theme.sc(12))
         card_lay.setVerticalSpacing(10)
         card_lay.setHorizontalSpacing(16)
 
@@ -3204,16 +3217,16 @@ class UserProfileDialog(QtWidgets.QDialog):
         store = QtWidgets.QFrame()
         store.setObjectName("profileCard")
         store_lay = QtWidgets.QVBoxLayout(store)
-        store_lay.setContentsMargins(16, 12, 16, 12)
-        store_lay.setSpacing(6)
+        store_lay.setContentsMargins(theme.sc(16), theme.sc(12), theme.sc(16), theme.sc(12))
+        store_lay.setSpacing(theme.sc(6))
 
         head = QtWidgets.QHBoxLayout()
         st_title = QtWidgets.QLabel("Backup Storage")
-        st_title.setStyleSheet(f"color:{_ACCENT}; font-size:12px; font-weight:bold;")
+        st_title.setStyleSheet(f"color:{_ACCENT}; font-size:{theme.sc_font(12)}px; font-weight:bold;")
         head.addWidget(st_title)
         head.addStretch()
         self._store_amount = QtWidgets.QLabel("—")
-        self._store_amount.setStyleSheet(f"color:{_TEXT}; font-size:12px; font-weight:bold;")
+        self._store_amount.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(12)}px; font-weight:bold;")
         head.addWidget(self._store_amount)
         store_lay.addLayout(head)
 
@@ -3221,23 +3234,23 @@ class UserProfileDialog(QtWidgets.QDialog):
         self._store_bar.setRange(0, 100)
         self._store_bar.setValue(0)
         self._store_bar.setTextVisible(False)
-        self._store_bar.setFixedHeight(8)
+        self._store_bar.setFixedHeight(theme.sc(8))
         self._store_bar.setStyleSheet(f"""
             QProgressBar {{ background:{_BG}; border:1px solid {_BORDER};
-                            border-radius:{theme.R_SM}px; }}
-            QProgressBar::chunk {{ background:{_ACCENT}; border-radius:{theme.R_SM}px; }}
+                            border-radius:{theme.sc(theme.R_SM)}px; }}
+            QProgressBar::chunk {{ background:{_ACCENT}; border-radius:{theme.sc(theme.R_SM)}px; }}
         """)
         store_lay.addWidget(self._store_bar)
 
         self._store_note = QtWidgets.QLabel("Checking…")
-        self._store_note.setStyleSheet(f"color:{_MUTED}; font-size:10px;")
+        self._store_note.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(10)}px;")
         store_lay.addWidget(self._store_note)
 
         root.addWidget(store)
 
         # ── Loading indicator ─────────────────────────────────────────────────
         self._status_lbl = QtWidgets.QLabel("Loading profile…")
-        self._status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: 11px;")
+        self._status_lbl.setStyleSheet(f"color: {_MUTED}; font-size: {theme.sc_font(11)}px;")
         self._status_lbl.setAlignment(QtCore.Qt.AlignCenter)
         root.addWidget(self._status_lbl)
 
@@ -3245,17 +3258,17 @@ class UserProfileDialog(QtWidgets.QDialog):
 
         # ── Action buttons ────────────────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()
-        btn_row.setSpacing(10)
+        btn_row.setSpacing(theme.sc(10))
 
         self._backups_btn = _icon_btn("My Backups", "archive")
-        self._backups_btn.setMinimumHeight(34)
+        self._backups_btn.setMinimumHeight(theme.sc(34))
         self._backups_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_SURFACE};
                 color: {_ACCENT};
                 border: 1px solid {_ACCENT};
-                border-radius:{theme.R_CTRL}px;
-                font-size: 12px;
+                border-radius:{theme.sc(theme.R_CTRL)}px;
+                font-size: {theme.sc_font(12)}px;
             }}
             QPushButton:hover {{
                 background: {_ACCENT};
@@ -3269,15 +3282,15 @@ class UserProfileDialog(QtWidgets.QDialog):
         self._backups_btn.clicked.connect(self._open_backups)
 
         logout_btn = QtWidgets.QPushButton("⏻  Logout")
-        logout_btn.setMinimumHeight(34)
+        logout_btn.setMinimumHeight(theme.sc(34))
         logout_btn.setObjectName("dangerBtn")
         logout_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_SURFACE};
                 color: {_RED};
                 border: 1px solid {_RED};
-                border-radius:{theme.R_CTRL}px;
-                font-size: 12px;
+                border-radius:{theme.sc(theme.R_CTRL)}px;
+                font-size: {theme.sc_font(12)}px;
             }}
             QPushButton:hover {{
                 background: {_RED};
@@ -3287,14 +3300,14 @@ class UserProfileDialog(QtWidgets.QDialog):
         logout_btn.clicked.connect(self._do_logout)
 
         help_btn = QtWidgets.QPushButton("?  Need Help?")
-        help_btn.setMinimumHeight(34)
+        help_btn.setMinimumHeight(theme.sc(34))
         help_btn.setStyleSheet(f"""
             QPushButton {{
                 background: {_SURFACE};
                 color: {_TEXT};
                 border: 1px solid {_BORDER};
-                border-radius:{theme.R_CTRL}px;
-                font-size: 12px;
+                border-radius:{theme.sc(theme.R_CTRL)}px;
+                font-size: {theme.sc_font(12)}px;
             }}
             QPushButton:hover {{
                 border-color: {_ACCENT};
@@ -3367,8 +3380,8 @@ class UserProfileDialog(QtWidgets.QDialog):
         colour = "#ef4444" if pct >= 95 else "#facc15" if pct >= 80 else _ACCENT
         self._store_bar.setStyleSheet(f"""
             QProgressBar {{ background:{_BG}; border:1px solid {_BORDER};
-                            border-radius:{theme.R_SM}px; }}
-            QProgressBar::chunk {{ background:{colour}; border-radius:{theme.R_SM}px; }}
+                            border-radius:{theme.sc(theme.R_SM)}px; }}
+            QProgressBar::chunk {{ background:{colour}; border-radius:{theme.sc(theme.R_SM)}px; }}
         """)
         files = int(quota.get("files") or 0)
         last = quota.get("lastUploadAt") or ""
@@ -3483,38 +3496,38 @@ class CubesatNameDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Name CubeSat")
         self.setModal(False)
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(theme.sc(380))
         self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius: {theme.R_CARD}px;
+                border-radius: {theme.sc(theme.R_CARD)}px;
             }}
         """)
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 18)
-        root.setSpacing(10)
+        root.setContentsMargins(theme.sc(24), theme.sc(20), theme.sc(24), theme.sc(18))
+        root.setSpacing(theme.sc(10))
 
         hdr = QtWidgets.QHBoxLayout()
         icon = QtWidgets.QLabel()
-        icon.setPixmap(theme.icon("satellite", _ACCENT, 22).pixmap(22, 22))
+        icon.setPixmap(theme.icon("satellite", _ACCENT, theme.sc(22)).pixmap(theme.sc(22), theme.sc(22)))
         hdr.addWidget(icon)
         title = QtWidgets.QLabel("Name CubeSat")
         title.setStyleSheet(
             f"color:{_ACCENT}; font-family:'{theme.DISPLAY}';"
-            f" font-size:{theme.FS_HEAD}px; font-weight:600; margin-left:8px;")
+            f" font-size:{theme.sc_font(theme.FS_HEAD)}px; font-weight:600; margin-left:{theme.sc(8)}px;")
         hdr.addWidget(title)
         hdr.addStretch()
         root.addLayout(hdr)
 
         self._status = QtWidgets.QLabel()
         self._status.setWordWrap(True)
-        self._status.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        self._status.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(theme.FS_BODY)}px;")
         root.addWidget(self._status)
 
         self._apex_id_label = QtWidgets.QLabel()
-        self._apex_id_label.setStyleSheet(f"color:{_MUTED}; font-size:{theme.FS_MICRO}px;")
+        self._apex_id_label.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(theme.FS_MICRO)}px;")
         self._apex_id_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         root.addWidget(self._apex_id_label)
 
@@ -3527,7 +3540,7 @@ class CubesatNameDialog(QtWidgets.QDialog):
         root.addWidget(self._name_edit)
 
         self._length_hint = QtWidgets.QLabel()
-        self._length_hint.setStyleSheet(f"color:{_MUTED}; font-size:{theme.FS_MICRO}px;")
+        self._length_hint.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(theme.FS_MICRO)}px;")
         root.addWidget(self._length_hint)
 
         btn_row = QtWidgets.QHBoxLayout()
@@ -3601,34 +3614,34 @@ class CompassCalibrationDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Compass Calibration")
         self.setModal(False)
-        self.setMinimumWidth(420)
+        self.setMinimumWidth(theme.sc(420))
         self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius: {theme.R_CARD}px;
+                border-radius: {theme.sc(theme.R_CARD)}px;
             }}
         """)
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(24, 20, 24, 18)
-        root.setSpacing(10)
+        root.setContentsMargins(theme.sc(24), theme.sc(20), theme.sc(24), theme.sc(18))
+        root.setSpacing(theme.sc(10))
 
         hdr = QtWidgets.QHBoxLayout()
         icon = QtWidgets.QLabel()
-        icon.setPixmap(theme.icon("compass", _ACCENT, 22).pixmap(22, 22))
+        icon.setPixmap(theme.icon("compass", _ACCENT, theme.sc(22)).pixmap(theme.sc(22), theme.sc(22)))
         hdr.addWidget(icon)
         title = QtWidgets.QLabel("Compass Calibration")
         title.setStyleSheet(
             f"color:{_ACCENT}; font-family:'{theme.DISPLAY}';"
-            f" font-size:{theme.FS_HEAD}px; font-weight:600; margin-left:8px;")
+            f" font-size:{theme.sc_font(theme.FS_HEAD)}px; font-weight:600; margin-left:{theme.sc(8)}px;")
         hdr.addWidget(title)
         hdr.addStretch()
         root.addLayout(hdr)
 
         self._status = QtWidgets.QLabel()
         self._status.setWordWrap(True)
-        self._status.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        self._status.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(theme.FS_BODY)}px;")
         root.addWidget(self._status)
 
         self._progress = QtWidgets.QProgressBar()
@@ -3716,32 +3729,32 @@ class SettingsDialog(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.setModal(True)
-        self.setMinimumWidth(460)
-        self.setMaximumWidth(560)
+        self.setMinimumWidth(theme.sc(460))
+        self.setMaximumWidth(theme.sc(560))
         self.setStyleSheet(_base_style() + f"""
             QDialog {{
                 background: {_BG};
                 border: 1px solid {_BORDER};
-                border-radius: {theme.R_CARD}px;
+                border-radius: {theme.sc(theme.R_CARD)}px;
             }}
         """)
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(26, 22, 26, 20)
-        root.setSpacing(6)
+        root.setContentsMargins(theme.sc(26), theme.sc(22), theme.sc(26), theme.sc(20))
+        root.setSpacing(theme.sc(6))
 
         hdr = QtWidgets.QHBoxLayout()
         icon = QtWidgets.QLabel()
-        icon.setPixmap(theme.icon("gear", _ACCENT, 22).pixmap(22, 22))
+        icon.setPixmap(theme.icon("gear", _ACCENT, theme.sc(22)).pixmap(theme.sc(22), theme.sc(22)))
         hdr.addWidget(icon)
         title = QtWidgets.QLabel("Settings")
         title.setStyleSheet(
             f"color:{_ACCENT}; font-family:'{theme.DISPLAY}';"
-            f" font-size:{theme.FS_HEAD}px; font-weight:600; margin-left:8px;")
+            f" font-size:{theme.sc_font(theme.FS_HEAD)}px; font-weight:600; margin-left:{theme.sc(8)}px;")
         hdr.addWidget(title)
         hdr.addStretch()
         root.addLayout(hdr)
-        root.addSpacing(8)
+        root.addSpacing(theme.sc(8))
 
         form = QtWidgets.QFormLayout()
         form.setLabelAlignment(QtCore.Qt.AlignLeft)
@@ -3793,16 +3806,16 @@ class SettingsDialog(QtWidgets.QDialog):
         root.addLayout(form)
 
         # ── CubeSat ──────────────────────────────────────────────────────────
-        root.addSpacing(10)
+        root.addSpacing(theme.sc(10))
         root.addWidget(self._caption("CUBESAT"))
         gcs = self.parent()
         name = getattr(gcs, "cubesat_name", None) or "(not named yet)"
         apex_id = getattr(gcs, "apex_id", None) or "—"
         self._cubesat_name_label = QtWidgets.QLabel(f"Name: {name}")
-        self._cubesat_name_label.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        self._cubesat_name_label.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(theme.FS_BODY)}px;")
         root.addWidget(self._cubesat_name_label)
         apex_id_label = QtWidgets.QLabel(f"APEX ID: {apex_id}")
-        apex_id_label.setStyleSheet(f"color:{_MUTED}; font-size:{theme.FS_MICRO}px;")
+        apex_id_label.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(theme.FS_MICRO)}px;")
         apex_id_label.setTextInteractionFlags(QtCore.Qt.TextSelectableByMouse)
         root.addWidget(apex_id_label)
         name_row = QtWidgets.QHBoxLayout()
@@ -3813,7 +3826,7 @@ class SettingsDialog(QtWidgets.QDialog):
         root.addLayout(name_row)
 
         # ── Compass ──────────────────────────────────────────────────────────
-        root.addSpacing(10)
+        root.addSpacing(theme.sc(10))
         root.addWidget(self._caption("COMPASS"))
         cal_row = QtWidgets.QHBoxLayout()
         cal_btn = _icon_btn("Calibrate Compass", "compass")
@@ -3823,11 +3836,11 @@ class SettingsDialog(QtWidgets.QDialog):
         root.addLayout(cal_row)
 
         # ── About ────────────────────────────────────────────────────────────
-        root.addSpacing(10)
+        root.addSpacing(theme.sc(10))
         root.addWidget(self._caption("ABOUT"))
         ver = QtWidgets.QLabel(
             f"APEX Ground Control Station v{APP_VERSION}")
-        ver.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        ver.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(theme.FS_BODY)}px;")
         root.addWidget(ver)
 
         about_row = QtWidgets.QHBoxLayout()
@@ -3838,7 +3851,7 @@ class SettingsDialog(QtWidgets.QDialog):
         root.addLayout(about_row)
 
         # ── Buttons ──────────────────────────────────────────────────────────
-        root.addSpacing(14)
+        root.addSpacing(theme.sc(14))
         btn_row = QtWidgets.QHBoxLayout()
         defaults_btn = QtWidgets.QPushButton("Restore defaults")
         defaults_btn.setObjectName("ghostBtn")
@@ -3865,7 +3878,7 @@ class SettingsDialog(QtWidgets.QDialog):
     @staticmethod
     def _label(text: str) -> QtWidgets.QLabel:
         lbl = QtWidgets.QLabel(text)
-        lbl.setStyleSheet(f"color:{_TEXT}; font-size:{theme.FS_BODY}px;")
+        lbl.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(theme.FS_BODY)}px;")
         return lbl
 
     def _restore_defaults(self):

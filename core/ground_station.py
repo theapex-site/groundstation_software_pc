@@ -128,6 +128,21 @@ class GroundStation(QtWidgets.QMainWindow):
         if screen is None:
             screen = QtWidgets.QApplication.primaryScreen()
         avail = screen.availableGeometry()
+        # Re-synced here rather than trusting main.py's one-time call: that
+        # one runs before LoginWindow even exists, off the screen under the
+        # cursor at that moment. If the user drags the login dialog to a
+        # different-DPI monitor before picking a COM port — a real case on
+        # a multi-monitor rig — this window would otherwise open using a
+        # stale factor baked in for a screen it is no longer on, while
+        # every theme.sc() call below (built fresh, after this) would use
+        # the *new* one, splitting the window between two scales. Setting
+        # it again here, and re-applying the stylesheet it feeds, keeps
+        # both halves on whichever screen this window actually opens on.
+        old_scale = theme.current_scale()
+        if theme.set_scale(avail) != old_scale:
+            app = QtWidgets.QApplication.instance()
+            if app is not None:
+                app.setStyleSheet(theme.qss())
         self.setMinimumSize(min(1180, avail.width()), min(700, avail.height()))
         # Always maximized, not capped at resize(1900, 1080) with maximize
         # only below a small-screen threshold: that cap meant a genuinely
@@ -226,6 +241,23 @@ class GroundStation(QtWidgets.QMainWindow):
         # paint before a bubble can anchor to her.
         QtCore.QTimer.singleShot(1200, self._show_welcome_message)
 
+        # The payload canvas's idle marks (_rescale) and the overlays
+        # pinned to its corners (_position_canvas_overlays) both size
+        # themselves off self._canvas's width/height — same problem as
+        # the comment just above: __init__ runs before main.py's .show()
+        # actually maximizes this window, so their first pass used
+        # whatever provisional size the window had at construction, not
+        # its real maximized one. Normally the resize that follows .show()
+        # re-fires both (they're each wired to a resize signal/event), but
+        # on at least one screen that never happened — off-centre marks
+        # and Pixie sitting near her corner instead of in it, not a one-
+        # off glitch but reproducible there. Re-running both once the
+        # window has actually been shown and had a chance to settle into
+        # its final maximized geometry costs nothing (both are cheap and
+        # idempotent) and removes the dependency on that resize firing
+        # correctly in the first place.
+        QtCore.QTimer.singleShot(200, self._resync_payload_canvas)
+
     # ══════════════════════════════════════════════════════════════════════════
     #  UI construction
     # ══════════════════════════════════════════════════════════════════════════
@@ -241,17 +273,17 @@ class GroundStation(QtWidgets.QMainWindow):
         """
         bar = QtWidgets.QWidget()
         bar.setObjectName("appBar")
-        bar.setFixedHeight(56)
+        bar.setFixedHeight(theme.sc(56))
 
         row = QtWidgets.QHBoxLayout(bar)
-        row.setContentsMargins(16, 0, 20, 0)
-        row.setSpacing(9)
+        row.setContentsMargins(theme.sc(16), 0, theme.sc(20), 0)
+        row.setSpacing(theme.sc(9))
 
         logo = QtWidgets.QLabel()
         pix = QtGui.QPixmap(os.path.join(BASE_PATH, "images", "Apex Logo.png"))
         if not pix.isNull():
-            logo.setPixmap(pix.scaled(32, 32, QtCore.Qt.KeepAspectRatio,
-                                      QtCore.Qt.SmoothTransformation))
+            logo_px = theme.sc(32)
+            logo.setPixmap(theme.scaled_pixmap(pix, logo_px, logo_px))
         row.addWidget(logo)
 
         wordmark = QtWidgets.QLabel("APEX")
@@ -270,7 +302,7 @@ class GroundStation(QtWidgets.QMainWindow):
         self.link_status = QtWidgets.QLabel("● ACQUIRING")
         self.link_status.setObjectName("linkChip")
         self.link_status.setProperty("state", "acquiring")
-        self.link_status.setFixedWidth(180)
+        self.link_status.setFixedWidth(theme.sc(180))
         self.link_status.setAlignment(QtCore.Qt.AlignCenter)
 
         self.com_label     = QtWidgets.QLabel(f"COM {self.com_port}")
@@ -311,10 +343,11 @@ class GroundStation(QtWidgets.QMainWindow):
         row.addWidget(rtg_btn)
 
         settings_btn = QtWidgets.QPushButton()
-        settings_btn.setIcon(theme.icon("gear", theme.SLATE, 17))
-        settings_btn.setIconSize(QtCore.QSize(17, 17))
+        settings_icon_px = theme.sc(17)
+        settings_btn.setIcon(theme.icon("gear", theme.SLATE, settings_icon_px))
+        settings_btn.setIconSize(QtCore.QSize(settings_icon_px, settings_icon_px))
         settings_btn.setObjectName("settingsBtn")
-        settings_btn.setFixedSize(34, 34)
+        settings_btn.setFixedSize(theme.sc(34), theme.sc(34))
         settings_btn.setCursor(QtCore.Qt.PointingHandCursor)
         settings_btn.setToolTip("Settings")
         settings_btn.setShortcut(QtGui.QKeySequence("Ctrl+,"))
@@ -327,10 +360,11 @@ class GroundStation(QtWidgets.QMainWindow):
         if not initials:
             # Signed out, or launched by the demo harness: a generic figure
             # reads better than a question mark in a disc.
-            profile_btn.setIcon(theme.icon("user", theme.DEEP, 16))
-            profile_btn.setIconSize(QtCore.QSize(16, 16))
+            profile_icon_px = theme.sc(16)
+            profile_btn.setIcon(theme.icon("user", theme.DEEP, profile_icon_px))
+            profile_btn.setIconSize(QtCore.QSize(profile_icon_px, profile_icon_px))
         profile_btn.setObjectName("avatarBtn")
-        profile_btn.setFixedSize(34, 34)
+        profile_btn.setFixedSize(theme.sc(34), theme.sc(34))
         profile_btn.setCursor(QtCore.Qt.PointingHandCursor)
         profile_btn.setToolTip(self.user_email or "User profile")
         profile_btn.setAccessibleName("User profile")
@@ -347,9 +381,14 @@ class GroundStation(QtWidgets.QMainWindow):
         # compressed past their text width instead of any of them dropping
         # out, which read as the RTG button and the last stat chip
         # overlapping (seen on a laptop whose Windows DPI scaling leaves
-        # less logical width than this bar assumes).
-        if hasattr(self, "_secondary_chips"):
-            show = self.width() >= 1250
+        # less logical width than this bar assumes). Scaled like the
+        # threshold's own 1920-wide design reference, and measured against
+        # self._content (the capped, centred dashboard column) rather than
+        # self.width() (the full window) — on a wider-than-16:9 screen
+        # those two stop being the same thing once _build_ui() centres the
+        # dashboard instead of stretching it to match the window.
+        if hasattr(self, "_secondary_chips") and hasattr(self, "_content"):
+            show = self._content.width() >= theme.sc(1250)
             for w in self._secondary_chips:
                 w.setVisible(show)
 
@@ -367,23 +406,34 @@ class GroundStation(QtWidgets.QMainWindow):
         central = QtWidgets.QWidget()
         self.setCentralWidget(central)
 
+        central.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+        outer = QtWidgets.QHBoxLayout(central)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        content = QtWidgets.QWidget()
+        content.setAttribute(QtCore.Qt.WA_TranslucentBackground)
+        outer.addWidget(content, 1)
+        self._content = content
+
         # Application bar across the top, panels beneath it.
-        root = QtWidgets.QVBoxLayout(central)
+        root = QtWidgets.QVBoxLayout(content)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self._build_app_bar())
 
         body = QtWidgets.QHBoxLayout()
-        body.setContentsMargins(theme.GAP, theme.GAP, theme.GAP, theme.GAP)
-        body.setSpacing(theme.GAP)
+        gap = theme.sc(theme.GAP)
+        body.setContentsMargins(gap, gap, gap, gap)
+        body.setSpacing(gap)
         root.addLayout(body, 1)
 
         # ── Left: telemetry panel ─────────────────────────────────────────────
         # minimumWidth rather than fixed: 420 + 450 of hard-fixed panels left
         # only ~480px of a 1366-wide laptop for the centre column.
         self.telemetry = TelemetryPanel()
-        self.telemetry.setMinimumWidth(360)
-        self.telemetry.setMaximumWidth(460)
+        self.telemetry.setMinimumWidth(theme.sc(360))
+        self.telemetry.setMaximumWidth(theme.sc(460))
         # No drop shadow here: the ground is #000000, so a black shadow in the
         # GAP beside the panel measured a 1% luminance change — invisible, and
         # it costs an offscreen render of the whole panel on every repaint.
@@ -397,13 +447,13 @@ class GroundStation(QtWidgets.QMainWindow):
         # centre, right) is unaffected by construction order.
         self.right = RightPanel()
         self.right.command_signal.connect(self._send_command)
-        self.right.setMinimumWidth(380)
-        self.right.setMaximumWidth(480)
+        self.right.setMinimumWidth(theme.sc(380))
+        self.right.setMaximumWidth(theme.sc(480))
 
         # ── Centre ────────────────────────────────────────────────────────────
         centre = QtWidgets.QFrame()
         cl = QtWidgets.QVBoxLayout(centre)
-        cl.setSpacing(theme.GAP)
+        cl.setSpacing(theme.sc(theme.GAP))
         cl.setContentsMargins(0, 0, 0, 0)
         body.addWidget(centre, 1)
 
@@ -457,7 +507,7 @@ class GroundStation(QtWidgets.QMainWindow):
         cl.addWidget(self._canvas, 5)
         # Just enough clearance for the progress bar to straddle the
         # canvas's bottom border.
-        cl.addSpacing(14)
+        cl.addSpacing(theme.sc(14))
 
         # The transfer progress bar floats on that border instead of sitting
         # in a row of its own — parented to the column, not the canvas, so
@@ -477,7 +527,7 @@ class GroundStation(QtWidgets.QMainWindow):
         self.progress_caption.setAlignment(QtCore.Qt.AlignCenter)
         self.progress_caption.setStyleSheet(
             f"background: transparent; border: none; color: {theme.CREAM};"
-            f" font-family: '{theme.MONO}'; font-size: {theme.FS_MICRO}px;"
+            f" font-family: '{theme.MONO}'; font-size: {theme.sc_font(theme.FS_MICRO)}px;"
         )
         self.progress_caption.hide()
         self._canvas.resized.connect(self._position_progress_bar)
@@ -489,7 +539,7 @@ class GroundStation(QtWidgets.QMainWindow):
         # given more height since there's nothing else competing for it.
         self.graph_popups: list[GraphPopup] = []
         strip = QtWidgets.QHBoxLayout()
-        strip.setSpacing(theme.GAP)
+        strip.setSpacing(theme.sc(theme.GAP))
         map_card = self.right.detach_map_card()
         flag_card = self.telemetry.detach_flag_card()
         strip.addWidget(map_card, 1)
@@ -1275,11 +1325,17 @@ class GroundStation(QtWidgets.QMainWindow):
             image = self._add_watermark(image.convert("RGBA"), cubesat_id)
             data  = image.tobytes("raw", "RGBA")
             qi    = QtGui.QImage(data, image.width, image.height, QtGui.QImage.Format_RGBA8888)
-            pm    = QtGui.QPixmap.fromImage(qi).scaled(
-                self.image_label.size(),
-                QtCore.Qt.KeepAspectRatio,
-                QtCore.Qt.SmoothTransformation,
-            )
+            label_size = self.image_label.size()
+            # This whole method runs on the background image-receive
+            # thread (see the class's own note above __init__); passing
+            # the ratio explicitly keeps this call to the one QApplication
+            # read it already needed, instead of also resolving
+            # activeWindow()/QScreen off the thread that owns neither.
+            app = QtWidgets.QApplication.instance()
+            ratio = app.devicePixelRatio() if app else 1.0
+            pm    = theme.scaled_pixmap(
+                QtGui.QPixmap.fromImage(qi), label_size.width(), label_size.height(),
+                ratio=ratio)
             QtCore.QMetaObject.invokeMethod(
                 self.image_label, "setPixmap",
                 QtCore.Qt.QueuedConnection,
@@ -1500,6 +1556,13 @@ class GroundStation(QtWidgets.QMainWindow):
         name_part = f", {name}" if name else ""
         self.show_toast(random.choice(pool).format(name=name_part), "info")
 
+    def _resync_payload_canvas(self):
+        """Re-run the payload canvas's size-dependent layout once this
+        window has had a chance to settle into its real, final (maximized)
+        geometry — see the comment where this is scheduled, in __init__."""
+        self._payload_marks._rescale()
+        self._position_canvas_overlays()
+
     def _open_graph_popup(self, graph_widget: MiniGraph):
         # One window per graph: double-clicking the same mini graph used to
         # stack another popup behind the last one.
@@ -1571,7 +1634,7 @@ class GroundStation(QtWidgets.QMainWindow):
         — asserting the raise here, instead of once at switch time, is
         what actually survives that.
         """
-        margin = 10
+        margin = theme.sc(10)
         w, h = self._canvas.width(), self._canvas.height()
         self._clear_image_btn.move(
             w - self._clear_image_btn.width() - margin, margin)
@@ -1831,7 +1894,7 @@ class _Canvas(QtWidgets.QFrame):
         super().__init__(parent)
         self.setStyleSheet(
             f"background-color:{theme.DEEP}; border:1px solid {theme.LINE};"
-            f" border-radius:{theme.R_CARD}px;"
+            f" border-radius:{theme.sc(theme.R_CARD)}px;"
         )
         self.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                            QtWidgets.QSizePolicy.Expanding)
@@ -1857,7 +1920,7 @@ class _ClearButton(QtWidgets.QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(self.SIZE, self.SIZE)
+        self.setFixedSize(theme.sc(self.SIZE), theme.sc(self.SIZE))
         self.setCursor(QtCore.Qt.PointingHandCursor)
         self._hover = False
 
@@ -1881,13 +1944,14 @@ class _ClearButton(QtWidgets.QWidget):
         p.setRenderHint(QtGui.QPainter.Antialiasing)
         rect = QtCore.QRectF(self.rect()).adjusted(0.75, 0.75, -0.75, -0.75)
         path = QtGui.QPainterPath()
-        path.addRoundedRect(rect, theme.R_SM, theme.R_SM)
+        r_sm = theme.sc(theme.R_SM)
+        path.addRoundedRect(rect, r_sm, r_sm)
         p.fillPath(path, QtGui.QColor(theme.ALARM_FILL if self._hover else "#0a0a10"))
         pen = QtGui.QPen(QtGui.QColor(theme.ALARM))
         pen.setWidthF(1.5)
         p.strokePath(path, pen)
 
-        cx, cy, s = rect.center().x(), rect.center().y(), self.ARM
+        cx, cy, s = rect.center().x(), rect.center().y(), theme.sc(self.ARM)
         pen = QtGui.QPen(QtGui.QColor(theme.ALARM))
         pen.setWidthF(1.6)
         pen.setCapStyle(QtCore.Qt.RoundCap)
@@ -1912,12 +1976,23 @@ class _FadingImage(QtWidgets.QLabel):
     def __init__(self, image_path: str, max_side: int, parent=None):
         super().__init__(parent)
         self.setStyleSheet("background: transparent; border: none;")
+        max_side = theme.sc(max_side)
         src = QtGui.QPixmap(image_path)
         if not src.isNull():
-            self.setPixmap(src.scaled(
-                max_side, max_side,
-                QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation))
-            self.setFixedSize(self.pixmap().size())
+            scaled = theme.scaled_pixmap(src, max_side, max_side)
+            self.setPixmap(scaled)
+            # NOT scaled.size() — that is the pixmap's raw physical pixel
+            # count, which on any screen with devicePixelRatio > 1 is
+            # larger than the widget actually needs to be (a pixmap tagged
+            # devicePixelRatio=2 at 300x300 physical is a 150x150 logical
+            # image). PyQt5 here does not expose QPixmap.deviceIndependentSize()
+            # to divide that out directly, so it's done by hand — a fixed
+            # size left at the raw count puts this widget, and everything
+            # pinned relative to it (Pixie's own corner, which is this
+            # exact class) at up to 2x-4x its intended footprint.
+            ratio = scaled.devicePixelRatio() or 1.0
+            self.setFixedSize(round(scaled.width() / ratio),
+                              round(scaled.height() / ratio))
         else:
             self.setFixedSize(0, 0)
 
@@ -1971,8 +2046,8 @@ class _PayloadMarks(QtWidgets.QWidget):
         # gaps as stretches, the same as the gaps between the three marks.
         # A fixed margin here on top of those stretches made the edges read
         # wider than the gaps between the logos — "even" only by accident.
-        col.setContentsMargins(0, self.TOP_PAD, 0, 24)
-        col.setSpacing(18)
+        col.setContentsMargins(0, theme.sc(self.TOP_PAD), 0, theme.sc(24))
+        col.setSpacing(theme.sc(18))
 
         # Translucent at rest, like a watermark sitting behind content
         # rather than competing with it. The alpha is baked straight into
@@ -2002,9 +2077,9 @@ class _PayloadMarks(QtWidgets.QWidget):
         # the only thing in the frame.
         self._caption = QtWidgets.QLabel(
             f"<div align='center' style='color:{theme.SLATE}'>"
-            f"<span style='font-size:{theme.FS_HEAD}px; font-weight:600;'>"
+            f"<span style='font-size:{theme.sc_font(theme.FS_HEAD)}px; font-weight:600;'>"
             "No payload image yet</span><br><br>"
-            f"<span style='font-size:{theme.FS_BODY}px;'>Press "
+            f"<span style='font-size:{theme.sc_font(theme.FS_BODY)}px;'>Press "
             f"<span style='color:{theme.TEAL}'>Transmit Image</span> to downlink "
             "the latest capture</span></div>"
         )
@@ -2064,31 +2139,60 @@ class _PayloadMarks(QtWidgets.QWidget):
         where this is used for why."""
         if pix.isNull():
             return pix
+        # pix.size() is already pix's *physical* pixel count in PyQt5 (it
+        # is not divided by devicePixelRatio() the way sizeHint()/width()
+        # on a QLabel displaying it would be) — so img needs no further
+        # multiplying by ratio here. Doing that doubled the physical size
+        # this img was built at, then setDevicePixelRatio(ratio) relabelled
+        # it as `ratio` times too big logically, which is what was blowing
+        # up this row's sizeHint on a real HiDPI screen.
+        ratio = pix.devicePixelRatio()
         img = QtGui.QImage(pix.size(), QtGui.QImage.Format_ARGB32_Premultiplied)
+        img.setDevicePixelRatio(ratio)
         img.fill(QtCore.Qt.transparent)
         p = QtGui.QPainter(img)
         p.setOpacity(opacity)
         p.drawPixmap(0, 0, pix)
         p.end()
         result = QtGui.QPixmap.fromImage(img)
-        result.setDevicePixelRatio(pix.devicePixelRatio())
+        result.setDevicePixelRatio(ratio)
         return result
 
     def _rescale(self):
         """Size the three marks to the canvas, floored and capped so they
         read at both a cramped and a wide window."""
-        side = max(min(self.height() - 48, self.MAX_MARK), 40)
+        # Capped by height alone, this could ask for a mark wider than the
+        # canvas actually is — the row has three of them side by side, and
+        # the APEX mark in particular (satellite + wordmark) is wider than
+        # it is tall, so a height-only cap that comfortably fits a tall
+        # narrow canvas can still overflow a canvas that is short *and*
+        # narrow (seen when the centre column ends up tight relative to
+        # its height: the mark bled straight off the left edge instead of
+        # shrinking to fit). Three marks' worth of width, minus the gaps
+        # the row's own stretches want between and around them, bounds it
+        # the other way too. The GCS mark renders wider than `side` itself
+        # (gcs_w below, from its own non-square source image) rather than
+        # an equal third, so the width budget is split unevenly to match
+        # — apex and cube get a plain third each, GCS gets the extra its
+        # own aspect ratio needs, which is where ~0.9 * (src_w/src_h)
+        # comes from.
+        gcs_ratio = self._gcs_src.width() / self._gcs_src.height() \
+            if not self._gcs_src.isNull() else 1.0
+        margin = theme.sc(40)
+        width_cap = max(theme.sc(40),
+                         int((self.width() - margin) / (2 + 0.9 * gcs_ratio)))
+        side = max(min(self.height() - theme.sc(48), theme.sc(self.MAX_MARK), width_cap),
+                   theme.sc(40))
 
         for label, source in ((self._apex, self._apex_src),
                               (self._cube, self._cube_src)):
             if not source.isNull():
-                scaled = source.scaled(
-                    side, side,
-                    QtCore.Qt.KeepAspectRatio, QtCore.Qt.SmoothTransformation)
+                scaled = theme.scaled_pixmap(source, side, side)
                 label.setPixmap(self._faded(scaled, self.MARK_OPACITY))
         if not self._gcs_src.isNull():
-            scaled = self._gcs_src.scaledToHeight(
-                int(side * 0.9), QtCore.Qt.SmoothTransformation)
+            gcs_h = int(side * 0.9)
+            gcs_w = round(gcs_h * self._gcs_src.width() / self._gcs_src.height())
+            scaled = theme.scaled_pixmap(self._gcs_src, gcs_w, gcs_h)
             self._gcs.setPixmap(self._faded(scaled, self.MARK_OPACITY))
 
 
@@ -2098,38 +2202,44 @@ class _ReconnectDialog(QtWidgets.QDialog):
     Call set_reconnected() to switch it to a success state.
     """
 
-    _STYLE = f"""
+    @staticmethod
+    def _style() -> str:
+        # A method, not a class-body f-string: the latter evaluates once
+        # at class-definition time (module import), baking in whatever
+        # theme._SCALE happened to be set to then rather than at the
+        # scale actually in effect when this dialog is shown.
+        return f"""
         QDialog {{
             background-color: {_BG};
             border: 1px solid {_BORDER};
-            border-radius:{theme.R_CARD}px;
+            border-radius:{theme.sc(theme.R_CARD)}px;
         }}
         QLabel {{
             color: {_TEXT};
-            font-size: {theme.FS_BODY}px;
+            font-size: {theme.sc_font(theme.FS_BODY)}px;
         }}
-        QPushButton {{ min-width: 92px; text-align: center; }}
+        QPushButton {{ min-width: {theme.sc(92)}px; text-align: center; }}
     """
 
     def __init__(self, parent):
         super().__init__(parent)
         self.setWindowTitle("Connection Status")
-        self.setFixedSize(380, 220)
+        self.setFixedSize(theme.sc(380), theme.sc(220))
         self.setModal(False)
-        self.setStyleSheet(self._STYLE)
+        self.setStyleSheet(self._style())
 
         root = QtWidgets.QVBoxLayout(self)
-        root.setContentsMargins(28, 24, 28, 20)
-        root.setSpacing(12)
+        root.setContentsMargins(theme.sc(28), theme.sc(24), theme.sc(28), theme.sc(20))
+        root.setSpacing(theme.sc(12))
 
         # Icon + title
         hdr = QtWidgets.QHBoxLayout()
         self._icon = QtWidgets.QLabel()
-        self._icon.setPixmap(theme.icon("warning", theme.ALARM, 26).pixmap(26, 26))
-        self._icon.setStyleSheet("margin-right:10px;")
-        self._icon.setFixedWidth(38)
+        self._icon.setPixmap(theme.icon("warning", theme.ALARM, theme.sc(26)).pixmap(theme.sc(26), theme.sc(26)))
+        self._icon.setStyleSheet(f"margin-right:{theme.sc(10)}px;")
+        self._icon.setFixedWidth(theme.sc(38))
         self._title = QtWidgets.QLabel("COM PORT DISCONNECTED")
-        self._title.setStyleSheet(f"color:{_RED}; font-size:14px; font-weight:bold;")
+        self._title.setStyleSheet(f"color:{_RED}; font-size:{theme.sc_font(14)}px; font-weight:bold;")
         hdr.addWidget(self._icon)
         hdr.addWidget(self._title)
         hdr.addStretch()
@@ -2142,11 +2252,11 @@ class _ReconnectDialog(QtWidgets.QDialog):
 
         self._msg = QtWidgets.QLabel("The CubeSat connection was lost.")
         self._msg.setWordWrap(True)
-        self._msg.setStyleSheet(f"color:{_TEXT}; font-size:13px;")
+        self._msg.setStyleSheet(f"color:{_TEXT}; font-size:{theme.sc_font(13)}px;")
         root.addWidget(self._msg)
 
         self._sub = QtWidgets.QLabel("Trying to reconnect automatically…")
-        self._sub.setStyleSheet(f"color:{_MUTED}; font-size:11px;")
+        self._sub.setStyleSheet(f"color:{_MUTED}; font-size:{theme.sc_font(11)}px;")
         root.addWidget(self._sub)
 
         # Animated dots timer
@@ -2171,9 +2281,9 @@ class _ReconnectDialog(QtWidgets.QDialog):
 
     def set_reconnected(self):
         self._dot_timer.stop()
-        self._icon.setPixmap(theme.icon("check", theme.OK, 26).pixmap(26, 26))
+        self._icon.setPixmap(theme.icon("check", theme.OK, theme.sc(26)).pixmap(theme.sc(26), theme.sc(26)))
         self._title.setText("LINK RESTORED")
-        self._title.setStyleSheet(f"color:{_GREEN}; font-size:14px; font-weight:bold;")
+        self._title.setStyleSheet(f"color:{_GREEN}; font-size:{theme.sc_font(14)}px; font-weight:bold;")
         self._msg.setText("CubeSat connection successfully re-established.")
         self._sub.setText("Telemetry stream resuming.")
         QtCore.QTimer.singleShot(2000, self.close)

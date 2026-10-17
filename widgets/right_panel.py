@@ -180,7 +180,7 @@ class CubeSat3D(QGLWidget):
         super().resizeEvent(event)
         path = QtGui.QPainterPath()
         path.addRoundedRect(QtCore.QRectF(self.rect()),
-                            theme.R_CTRL, theme.R_CTRL)
+                            theme.sc(theme.R_CTRL), theme.sc(theme.R_CTRL))
         rounded = QtGui.QRegion(path.toFillPolygon().toPolygon())
         if not rounded.isEmpty():
             self.setMask(rounded)
@@ -318,7 +318,7 @@ class RightPanel(QtWidgets.QFrame):
             g = theme.TabCard(name, icon_name=icon_name)
             grid = QtWidgets.QGridLayout()
             # Room for the heading, which is painted as part of the outline.
-            grid.setContentsMargins(12, g.tab_height() + 6, 12, 10)
+            grid.setContentsMargins(theme.sc(12), g.tab_height() + theme.sc(6), theme.sc(12), theme.sc(10))
             g.setLayout(grid)
             return g
 
@@ -338,8 +338,8 @@ class RightPanel(QtWidgets.QFrame):
         # at all. Capped so it still grows on a bigger screen (nice to
         # have) but never past the point of crowding out the controls
         # below it.
-        self.cubesat_3d.setMinimumHeight(200)
-        self.cubesat_3d.setMaximumHeight(420)
+        self.cubesat_3d.setMinimumHeight(theme.sc(200))
+        self.cubesat_3d.setMaximumHeight(theme.sc(420))
         self.cubesat_3d.setSizePolicy(QtWidgets.QSizePolicy.Expanding,
                                       QtWidgets.QSizePolicy.Expanding)
         imu.layout().addWidget(self.cubesat_3d, 0, 0, 1, 2)
@@ -415,8 +415,9 @@ class RightPanel(QtWidgets.QFrame):
             for btn_id, text, icon_name, command, shortcut, tip, kind in items:
                 btn = QtWidgets.QPushButton(text)
                 tint = theme.ALARM if kind == "danger" else theme.SLATE
-                btn.setIcon(theme.icon(icon_name, tint, 16))
-                btn.setIconSize(QtCore.QSize(16, 16))
+                icon_px = theme.sc(16)
+                btn.setIcon(theme.icon(icon_name, tint, icon_px))
+                btn.setIconSize(QtCore.QSize(icon_px, icon_px))
                 if kind == "danger":
                     btn.setObjectName("dangerBtn")
                 if shortcut:
@@ -427,7 +428,7 @@ class RightPanel(QtWidgets.QFrame):
                 btn.setAccessibleName(text)
                 # A floor, so a cramped panel scrolls instead of flattening
                 # the text into its own padding.
-                btn.setMinimumHeight(34)
+                btn.setMinimumHeight(theme.sc(34))
                 theme.hover_lift(btn)
 
                 if btn_id == "detect":
@@ -463,7 +464,7 @@ class RightPanel(QtWidgets.QFrame):
             "Map view helps visualise the CubeSat ground track."
         )
         map_layout = QtWidgets.QVBoxLayout()
-        map_layout.setContentsMargins(12, map_group.tab_height() + 6, 12, 10)
+        map_layout.setContentsMargins(theme.sc(12), map_group.tab_height() + theme.sc(6), theme.sc(12), theme.sc(10))
         map_group.setLayout(map_layout)
 
         # What the embedded frame is currently showing, as opposed to the
@@ -557,7 +558,7 @@ class RightPanel(QtWidgets.QFrame):
         btn.setText(text if text is not None else default["text"])
         use_icon = icon_name if icon_name is not None else default["icon_name"]
         use_danger = danger or (text is None and default["danger"])
-        btn.setIcon(theme.icon(use_icon, theme.ALARM if use_danger else theme.SLATE, 16))
+        btn.setIcon(theme.icon(use_icon, theme.ALARM if use_danger else theme.SLATE, theme.sc(16)))
         btn.setObjectName("dangerBtn" if use_danger else "")
         theme.repolish(btn)
         btn.clicked.disconnect()

@@ -105,6 +105,156 @@ GUTTER = 22
 # the text; this is that, with a floor that clears a three-line tip.
 TIP_MS = 12000
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  Scale — one factor for every screen
+# ══════════════════════════════════════════════════════════════════════════════
+# Every pixel value above (and the fixed widths/heights sprinkled through
+# the widget files) was tuned by eye against a 1920x1080 laptop screen.
+# AA_EnableHighDpiScaling (see main.py) already corrects for Windows' own
+# per-monitor DPI percentage, but a bigger or smaller monitor can still
+# hand Qt a *logical* pixel budget nowhere near 1920x1080 even once that
+# correction is applied — an external monitor Windows happens to scale to
+# 125% can end up with less logical room than the laptop ever had, which
+# clipped whole sections (Control Panel buttons, Air Quality) instead of
+# just reflowing them. _SCALE is set once, from the real screen the window
+# is about to open on, and sc()/qss() multiply by it everywhere — so the
+# same *ratio* holds regardless of screen size, which is the actual ask,
+# not a specific pixel count.
+_SCALE = 1.0
+
+# A screen running aggressive Windows display scaling (a 4K panel at
+# 250%/300%, common once it's treated as a "small, high-density" display
+# rather than a laptop) can hand Qt a *logical* availableGeometry well
+# under half of 1920x1080 — min(960, 540) wide/tall was measured on one
+# such screen. 0.70 used to be a floor here on the assumption nothing
+# legitimate would need to go lower, but that floor was exactly what kept
+# forcing the UI larger than the real available space on screens like
+# that, overflowing it instead of fitting — "fits the screen" has to win
+# over "never shrinks past a certain point". 0.35 is a genuine safety rail
+# only, against a nonsense/zero availableGeometry, not a real ceiling on
+# how small a legitimate screen can honestly compute to.
+_SCALE_MIN = 0.35
+_SCALE_MAX = 1.75
+
+
+def set_scale(avail: QtCore.QRect) -> float:
+    """
+    Compute and store the UI scale factor from a screen's *logical*
+    availableGeometry (post AA_EnableHighDpiScaling, so this layers on top
+    of whatever Windows' own DPI percentage already corrected for).
+
+    Call once, before building any window — qss() and sc() both read the
+    stored factor, so anything built before this runs freezes in at 1.0
+    and never picks up the real one.
+    """
+    global _SCALE
+    if avail.width() <= 0 or avail.height() <= 0:
+        _SCALE = 1.0
+        return _SCALE
+    factor = min(avail.width() / 1920.0, avail.height() / 1080.0)
+    _SCALE = max(_SCALE_MIN, min(_SCALE_MAX, factor))
+    return _SCALE
+
+
+def current_scale() -> float:
+    """The factor set_scale() last computed — for comparing against a new
+    one before deciding whether a stylesheet rebuild is actually needed."""
+    return _SCALE
+
+
+def sc(px: float) -> int:
+    """Scale a design-reference pixel value by the current screen factor.
+
+    0 stays exactly 0 (a square corner, a collapsed margin) rather than
+    being floored up to 1 — only an actually-positive value gets the floor,
+    which exists so a real but small size never scales down to invisible.
+    """
+    if px == 0:
+        return 0
+    return max(1, round(px * _SCALE))
+
+
+# A cramped screen (see _SCALE_MIN above) needs its *layout* — margins,
+# padding, icon boxes, dialog widths — to shrink all the way down to
+# actually fit. Text does not get that same amount of room: a licence key
+# or any other dense string scaled down to _SCALE's floor renders at only
+# a few pixels tall, which reads as mangled/blurry glyphs rather than
+# small-but-legible text. Fonts stop shrinking well before layout does.
+_FONT_SCALE_MIN = 0.70
+
+
+def sc_font(px: float) -> int:
+    """Scale a font size — same idea as sc(), but on its own floor so text
+    stays legible even once sc() has gone lower to make the layout fit."""
+    if px == 0:
+        return 0
+    factor = max(_FONT_SCALE_MIN, _SCALE)
+    return max(1, round(px * factor))
+
+
+def scaled_pixmap(src: QtGui.QPixmap, w: int, h: int,
+                   aspect: QtCore.Qt.AspectRatioMode = QtCore.Qt.KeepAspectRatio,
+                   ratio: float = None) -> QtGui.QPixmap:
+    """Scale a raster image (a PNG, not an SVG icon) to `w`x`h` *logical*
+    pixels, rendered at the screen's actual pixel density instead of at a
+    plain 1:1 bitmap.
+
+    Without this, a pixmap scaled straight to w/h is only ever w*h pixels
+    of real image data; Qt then has no choice but to stretch that onto
+    however many physical pixels the screen actually has to show it in,
+    which on a screen with devicePixelRatio > 1 (any modern high-DPI
+    monitor) reads as blur — the image itself is fine, it is just being
+    displayed at a fraction of its needed resolution. Scaling to
+    w*ratio x h*ratio first and tagging the result with that ratio is the
+    same fix _tinted() already used for Pixie's speech bubble, pulled out
+    so every other logo/mascot/illustration gets it too instead of each
+    one reinventing it (or, as most of them did, not).
+
+    `ratio`: pass this explicitly from a non-GUI thread (see
+    core/ground_station.py's image-receive path) instead of leaving it to
+    device_ratio()'s default lookup — that now also reads
+    QApplication.activeWindow() and the window's QScreen to resolve the
+    *correct* screen rather than an app-global one, which is more Qt
+    GUI-state than is safe to touch from a thread that is not the one
+    running the event loop.
+    """
+    if ratio is None:
+        ratio = device_ratio()
+    result = src.scaled(max(1, int(w * ratio)), max(1, int(h * ratio)),
+                         aspect, QtCore.Qt.SmoothTransformation)
+    result.setDevicePixelRatio(ratio)
+    return result
+
+
+def device_ratio() -> float:
+    """The devicePixelRatio of the screen actually in front of the user,
+    or 1.0 before a QApplication exists.
+
+    One shared lookup instead of the `app = QApplication.instance(); ratio
+    = app.devicePixelRatio() if app else 1.0` snippet repeated at every
+    QMovie/QPixmap call site that needs it (dialogs.py's signing/download
+    animations, space_bg.py's starfield layers) — so a future change is
+    one edit instead of several copies to keep in sync.
+
+    QApplication.devicePixelRatio() is app-global: on a multi-monitor rig
+    with mismatched DPI, it reports whichever connected screen has the
+    *highest* ratio, not the one actually being drawn to — a window on
+    the lower-DPI monitor would render everything built through this
+    function oversized for the screen it is really on. The active
+    window's own screen is what is actually in front of the user, so it
+    is asked first; the app-global value only covers the gap before any
+    window exists yet (icon/animation setup that runs ahead of .show()).
+    """
+    app = QtWidgets.QApplication.instance()
+    if app is None:
+        return 1.0
+    win = app.activeWindow()
+    if win is not None:
+        screen = win.screen()
+        if screen is not None:
+            return screen.devicePixelRatio()
+    return app.devicePixelRatio()
+
 
 def _resource(*parts: str) -> str:
     base = getattr(sys, "_MEIPASS", None) or os.path.abspath(os.path.dirname(__file__))
@@ -194,30 +344,30 @@ class TabCard(QtWidgets.QGroupBox):
         # in the centre column).
         self._headless = headless
         self._title_font = QtGui.QFont(MONO, pointSize=-1)
-        self._title_font.setPixelSize(FS_LABEL)
+        self._title_font.setPixelSize(sc_font(FS_LABEL))
         self._title_font.setWeight(QtGui.QFont.DemiBold)
         self._title_font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 1.4)
 
     def _icon_span(self) -> int:
-        return self.ICON + self.ICON_GAP if self._icon_name else 0
+        return sc(self.ICON + self.ICON_GAP) if self._icon_name else 0
 
     def tab_height(self) -> int:
         if self._headless:
             return 0
-        return QtGui.QFontMetrics(self._title_font).height() + self.PAD_Y * 2
+        return QtGui.QFontMetrics(self._title_font).height() + sc(self.PAD_Y) * 2
 
     def tab_width(self) -> int:
         fm = QtGui.QFontMetrics(self._title_font)
         return min(fm.horizontalAdvance(self.title())
-                   + self._icon_span() + self.PAD_X * 2,
-                   max(self.width() - R_CARD - self.NOTCH, 40))
+                   + self._icon_span() + sc(self.PAD_X) * 2,
+                   max(self.width() - sc(R_CARD) - sc(self.NOTCH), sc(40)))
 
     def paintEvent(self, event):
         p = QtGui.QPainter(self)
         p.setRenderHint(QtGui.QPainter.Antialiasing, True)
 
         w, h = self.width(), self.height()
-        r = float(R_CARD)
+        r = float(sc(R_CARD))
 
         if self._headless:
             # Plain rounded rect — no tab, no fillet, nothing to join.
@@ -230,7 +380,7 @@ class TabCard(QtWidgets.QGroupBox):
             p.end()
             return
 
-        n = float(self.NOTCH)
+        n = float(sc(self.NOTCH))
         th = float(self.tab_height())
         tw = float(self.tab_width())
 
@@ -258,12 +408,13 @@ class TabCard(QtWidgets.QGroupBox):
         pen.setWidthF(1.0)
         p.strokePath(path, pen)
 
-        text_x = self.PAD_X + self._icon_span()
+        text_x = sc(self.PAD_X) + self._icon_span()
         if self._icon_name:
-            pix = icon(self._icon_name, SLATE, self.ICON).pixmap(
-                self.ICON, self.ICON)
-            p.drawPixmap(QtCore.QPoint(self.PAD_X,
-                                       int((th - self.ICON) / 2)), pix)
+            icon_px = sc(self.ICON)
+            pix = icon(self._icon_name, SLATE, icon_px).pixmap(
+                icon_px, icon_px)
+            p.drawPixmap(QtCore.QPoint(sc(self.PAD_X),
+                                       int((th - icon_px) / 2)), pix)
 
         p.setFont(self._title_font)
         p.setPen(QtGui.QColor(SLATE))
@@ -344,7 +495,7 @@ class _HoverGlow(QtCore.QObject):
 
 def hover_lift(widget: QtWidgets.QWidget, radius: int = 22) -> None:
     """Give `widget` a teal glow that blooms under the cursor."""
-    _HoverGlow(widget, radius)
+    _HoverGlow(widget, sc(radius))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -375,14 +526,20 @@ def icon(name: str, color: str = SLATE, size: int = 16) -> QtGui.QIcon:
         svg = fh.read().replace("CURRENTCOLOR", color)
 
     renderer = QtSvg.QSvgRenderer(QtCore.QByteArray(svg.encode("utf-8")))
-    ratio = QtWidgets.QApplication.instance().devicePixelRatio() \
-        if QtWidgets.QApplication.instance() else 1.0
+    ratio = device_ratio()
     pix = QtGui.QPixmap(int(size * ratio), int(size * ratio))
     pix.setDevicePixelRatio(ratio)
     pix.fill(QtCore.Qt.transparent)
     painter = QtGui.QPainter(pix)
     painter.setRenderHint(QtGui.QPainter.Antialiasing)
-    renderer.render(painter)
+    # render(painter) with no target rect draws the SVG at its own native
+    # viewBox size, positioned at (0, 0) of the pixmap rather than scaled
+    # to fill it — harmless when `size` happened to be close to that
+    # native size, but once sc() started asking for a wider range of
+    # sizes this cropped or shrank icons into a fragment in one corner
+    # instead of scaling them. The explicit target rect is what actually
+    # stretches the art to fill the requested size.
+    renderer.render(painter, QtCore.QRectF(0, 0, size, size))
     painter.end()
 
     result = QtGui.QIcon(pix)
@@ -402,9 +559,9 @@ QToolTip {{
     background-color: {RAISED};
     color: {CREAM};
     border: 1px solid {LINE};
-    border-radius: {R_SM}px;
-    padding: 6px 9px;
-    font-size: {FS_BODY}px;
+    border-radius: {sc(R_SM)}px;
+    padding: {sc(6)}px {sc(9)}px;
+    font-size: {sc_font(FS_BODY)}px;
 }}
 
 /* No rule here at all meant QMenu — RTG's "+ Add Graph" among others —
@@ -414,34 +571,34 @@ QMenu {{
     background-color: {RAISED};
     color: {CREAM};
     border: 1px solid {LINE};
-    border-radius: {R_SM}px;
-    padding: 4px;
-    font-size: {FS_BODY}px;
+    border-radius: {sc(R_SM)}px;
+    padding: {sc(4)}px;
+    font-size: {sc_font(FS_BODY)}px;
 }}
 QMenu::item {{
-    padding: 6px 24px 6px 12px;
-    border-radius: {R_SM}px;
+    padding: {sc(6)}px {sc(24)}px {sc(6)}px {sc(12)}px;
+    border-radius: {sc(R_SM)}px;
 }}
 QMenu::item:selected {{ background: {TEAL_SOFT}; color: {CREAM}; }}
 QMenu::item:disabled {{ color: {DIM}; }}
-QMenu::separator {{ height: 1px; background: {LINE}; margin: 4px 8px; }}
-QMenu::right-arrow {{ width: 10px; height: 10px; }}
+QMenu::separator {{ height: 1px; background: {LINE}; margin: {sc(4)}px {sc(8)}px; }}
+QMenu::right-arrow {{ width: {sc(10)}px; height: {sc(10)}px; }}
 
 /* ── Panels ─────────────────────────────────────────────────────────────── */
 #TelemetryPanel, #RightPanel {{
     background: {PANEL};
     border: 1px solid {LINE};
-    border-radius: {R_CARD}px;
+    border-radius: {sc(R_CARD)}px;
 }}
 
 #groupBox {{
     border: 1px solid {LINE};
-    border-radius: {R_CARD}px;
+    border-radius: {sc(R_CARD)}px;
     background: {RAISED};
-    margin-top: 18px;
-    padding: 12px 6px 6px 6px;
+    margin-top: {sc(18)}px;
+    padding: {sc(12)}px {sc(6)}px {sc(6)}px {sc(6)}px;
     font-family: "{MONO}";
-    font-size: {FS_LABEL}px;
+    font-size: {sc_font(FS_LABEL)}px;
     font-weight: 600;
     letter-spacing: {TRACK_LABEL};
     color: {SLATE};
@@ -456,35 +613,35 @@ QMenu::right-arrow {{ width: 10px; height: 10px; }}
 #groupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
-    left: 0px;
-    padding: 5px 14px 8px 14px;
+    left: {sc(0)}px;
+    padding: {sc(5)}px {sc(14)}px {sc(8)}px {sc(14)}px;
     background: {RAISED};
     border: 1px solid {LINE};
     border-bottom: none;
-    border-top-left-radius: {R_CARD}px;
-    border-top-right-radius: {R_CARD}px;
-    border-bottom-left-radius: 0px;
-    border-bottom-right-radius: 0px;
+    border-top-left-radius: {sc(R_CARD)}px;
+    border-top-right-radius: {sc(R_CARD)}px;
+    border-bottom-left-radius: {sc(0)}px;
+    border-bottom-right-radius: {sc(0)}px;
     color: {SLATE};
 }}
 
 #mainTitle {{
     font-family: "{DISPLAY}";
     color: {CREAM};
-    font-size: {FS_HEAD}px;
+    font-size: {sc_font(FS_HEAD)}px;
     font-weight: 700;
-    padding: 4px 2px;
+    padding: {sc(4)}px {sc(2)}px;
 }}
 
 #nameLabel {{
     color: {SLATE};
-    font-size: {FS_LABEL}px;
+    font-size: {sc_font(FS_LABEL)}px;
     font-weight: 500;
 }}
 #valueLabel {{
     font-family: "{MONO}";
     color: {CREAM};
-    font-size: {FS_VALUE}px;
+    font-size: {sc_font(FS_VALUE)}px;
     font-weight: 600;
 }}
 /* Health state is set as a property, so the rule below replaces only the
@@ -499,7 +656,7 @@ QMenu::right-arrow {{ width: 10px; height: 10px; }}
 #unitLabel {{
     font-family: "{MONO}";
     color: {SLATE};
-    font-size: {FS_LABEL}px;
+    font-size: {sc_font(FS_LABEL)}px;
 }}
 #unitLabel[state="stale"] {{ color: {DIM}; }}
 
@@ -507,8 +664,8 @@ QMenu::right-arrow {{ width: 10px; height: 10px; }}
    direction glyph beside the value. Colour alone fails for red-green
    colour blindness, in a greyscale screenshot and on a projector. */
 #rowStripe {{
-    min-width: 3px; max-width: 3px;
-    border-radius: 2px;
+    min-width: {sc(3)}px; max-width: {sc(3)}px;
+    border-radius: {sc(2)}px;
     background: {LINE};
 }}
 #rowStripe[state="ok"]    {{ background: {OK}; }}
@@ -518,7 +675,7 @@ QMenu::right-arrow {{ width: 10px; height: 10px; }}
 
 #rowGlyph {{
     font-family: "{MONO}";
-    font-size: {FS_MICRO}px;
+    font-size: {sc_font(FS_MICRO)}px;
     color: transparent;
 }}
 #rowGlyph[state="warn"]  {{ color: {WARN}; }}
@@ -527,9 +684,9 @@ QMenu::right-arrow {{ width: 10px; height: 10px; }}
 /* Data age, in the telemetry panel heading. */
 #agePill {{
     font-family: "{MONO}";
-    font-size: {FS_MICRO}px;
+    font-size: {sc_font(FS_MICRO)}px;
     font-weight: 600;
-    padding: 4px 10px;
+    padding: {sc(4)}px {sc(10)}px;
     border-radius: {R_PILL}px;
     background: {RAISED};
     border: 1px solid {LINE};
@@ -539,21 +696,21 @@ QMenu::right-arrow {{ width: 10px; height: 10px; }}
 #agePill[state="stale"] {{ color: {WARN};  border-color: {WARN}; }}
 #agePill[state="lost"]  {{ color: {ALARM}; border-color: {ALARM}; }}
 
-/* Application bar, in place of the old 250px logo header. */
+/* Application bar, in place of the old {sc(250)}px logo header. */
 #appBar {{
     background: {PANEL};
     border-bottom: 1px solid {LINE};
 }}
 #appBarMark {{
     font-family: "{DISPLAY}";
-    font-size: {FS_HEAD}px;
+    font-size: {sc_font(FS_HEAD)}px;
     font-weight: 700;
     letter-spacing: 1px;
     color: {CREAM};
 }}
 #appBarSub {{
     font-family: "{BODY}";
-    font-size: {FS_LABEL}px;
+    font-size: {sc_font(FS_LABEL)}px;
     font-weight: 500;
     letter-spacing: {TRACK_LABEL};
     color: {SLATE};
@@ -563,11 +720,11 @@ QMenu::right-arrow {{ width: 10px; height: 10px; }}
    Payload / Comms / System rather than eight identical rows. */
 #groupCaption {{
     font-family: "{MONO}";
-    font-size: {FS_MICRO}px;
+    font-size: {sc_font(FS_MICRO)}px;
     font-weight: 600;
     letter-spacing: {TRACK_LABEL};
     color: {DIM};
-    padding: 8px 2px 2px 2px;
+    padding: {sc(8)}px {sc(2)}px {sc(2)}px {sc(2)}px;
 }}
 
 /* Session chips in the application bar: port, signal, clock, packets.
@@ -576,29 +733,29 @@ QMenu::right-arrow {{ width: 10px; height: 10px; }}
    the middle of it. They are added with AlignBottom for that to land. */
 #statChip {{
     font-family: "{MONO}";
-    font-size: {FS_MICRO}px;
+    font-size: {sc_font(FS_MICRO)}px;
     color: {SLATE};
     background: {RAISED};
     border: 1px solid {LINE};
     border-bottom: none;
-    border-top-left-radius: {R_CTRL}px;
-    border-top-right-radius: {R_CTRL}px;
-    border-bottom-left-radius: 0px;
-    border-bottom-right-radius: 0px;
-    padding: 5px 11px 6px 11px;
+    border-top-left-radius: {sc(R_CTRL)}px;
+    border-top-right-radius: {sc(R_CTRL)}px;
+    border-bottom-left-radius: {sc(0)}px;
+    border-bottom-right-radius: {sc(0)}px;
+    padding: {sc(5)}px {sc(11)}px {sc(6)}px {sc(11)}px;
 }}
 #linkChip {{
     font-family: "{MONO}";
-    font-size: {FS_MICRO}px;
+    font-size: {sc_font(FS_MICRO)}px;
     font-weight: 600;
     background: {RAISED};
     border: 1px solid {LINE};
     border-bottom: none;
-    border-top-left-radius: {R_CTRL}px;
-    border-top-right-radius: {R_CTRL}px;
-    border-bottom-left-radius: 0px;
-    border-bottom-right-radius: 0px;
-    padding: 5px 11px 6px 11px;
+    border-top-left-radius: {sc(R_CTRL)}px;
+    border-top-right-radius: {sc(R_CTRL)}px;
+    border-bottom-left-radius: {sc(0)}px;
+    border-bottom-right-radius: {sc(0)}px;
+    padding: {sc(5)}px {sc(11)}px {sc(6)}px {sc(11)}px;
     color: {SLATE};
 }}
 #linkChip[state="stable"]    {{ color: {OK};    border-color: {OK}; }}
@@ -610,10 +767,10 @@ QMenu::right-arrow {{ width: 10px; height: 10px; }}
 #staleBanner {{
     background: {RAISED};
     border: 1px solid {LINE};
-    border-radius: {R_CTRL}px;
+    border-radius: {sc(R_CTRL)}px;
     color: {SLATE};
-    font-size: {FS_LABEL}px;
-    padding: 8px 11px;
+    font-size: {sc_font(FS_LABEL)}px;
+    padding: {sc(8)}px {sc(11)}px;
 }}
 #staleBanner[state="stale"] {{ color: {WARN}; border-color: {WARN}; }}
 #staleBanner[state="lost"]  {{ color: {ALARM}; border-color: {ALARM}; }}
@@ -623,10 +780,10 @@ QTextEdit {{
     background: {DEEP};
     color: {CREAM};
     border: 1px solid {LINE};
-    border-radius: {R_CTRL}px;
-    padding: 8px;
+    border-radius: {sc(R_CTRL)}px;
+    padding: {sc(8)}px;
     font-family: "{MONO}";
-    font-size: {FS_LABEL}px;
+    font-size: {sc_font(FS_LABEL)}px;
     selection-background-color: {TEAL};
     selection-color: {DEEP};
 }}
@@ -636,15 +793,15 @@ QPushButton {{
     background: {RAISED};
     color: {CREAM};
     border: 1px solid {LINE};
-    padding: 9px 14px;
-    border-radius: {R_CTRL}px;
-    font-size: {FS_BODY}px;
+    padding: {sc(9)}px {sc(14)}px;
+    border-radius: {sc(R_CTRL)}px;
+    font-size: {sc_font(FS_BODY)}px;
     font-weight: 500;
     text-align: left;
 }}
 QPushButton:hover  {{ border-color: {TEAL}; color: {TEAL}; }}
 QPushButton:pressed {{ background: {PANEL}; }}
-QPushButton:focus  {{ border: 2px solid {TEAL}; }}
+QPushButton:focus  {{ border: {sc(2)}px solid {TEAL}; }}
 QPushButton:disabled {{
     background: {PANEL};
     color: {DISABLED};
@@ -659,7 +816,7 @@ QPushButton#primaryBtn {{
     font-family: "{DISPLAY}";
     font-weight: 700;
     text-align: center;
-    padding: 11px 20px;
+    padding: {sc(11)}px {sc(20)}px;
 }}
 QPushButton#primaryBtn:hover    {{ background: {GRADIENT_COOL}; }}
 QPushButton#primaryBtn:disabled {{ background: {LINE}; color: {DISABLED}; }}
@@ -676,10 +833,10 @@ QPushButton#settingsBtn {{
     background: {RAISED};
     color: {TEAL};
     border: 1px solid {LINE};
-    border-radius: 17px;
+    border-radius: {sc(17)}px;
     font-family: "Segoe UI Symbol", "Segoe UI";
-    font-size: 15px;
-    padding: 0px;
+    font-size: {sc_font(15)}px;
+    padding: {sc(0)}px;
     text-align: center;
 }}
 
@@ -689,16 +846,16 @@ QPushButton#rtgBtn {{
     background: transparent;
     color: {TEAL};
     border: 1px solid {TEAL};
-    border-radius: {R_CTRL}px;
+    border-radius: {sc(R_CTRL)}px;
     font-family: "{MONO}";
-    font-size: {FS_LABEL}px;
+    font-size: {sc_font(FS_LABEL)}px;
     font-weight: 700;
     letter-spacing: {TRACK_LABEL};
-    padding: 7px 14px;
+    padding: {sc(7)}px {sc(14)}px;
     text-align: center;
 }}
 QPushButton#rtgBtn:hover  {{ background: {TEAL}; color: {DEEP}; }}
-QPushButton#rtgBtn:focus  {{ border: 2px solid {CREAM}; }}
+QPushButton#rtgBtn:focus  {{ border: {sc(2)}px solid {CREAM}; }}
 
 /* The profile, as the operator's initials in a teal disc. A gear here meant
    preferences to everyone and opened a profile instead. */
@@ -706,19 +863,19 @@ QPushButton#avatarBtn {{
     background: {TEAL};
     color: {DEEP};
     border: 1px solid {TEAL};
-    border-radius: 17px;
+    border-radius: {sc(17)}px;
     font-family: "{BODY}";
-    font-size: {FS_BODY}px;
+    font-size: {sc_font(FS_BODY)}px;
     font-weight: 600;
-    letter-spacing: 0.5px;
-    padding: 0px;
+    letter-spacing: {sc(0.5)}px;
+    padding: {sc(0)}px;
     text-align: center;
 }}
 QPushButton#avatarBtn:hover {{
     background: {RAISED};
     color: {TEAL};
 }}
-QPushButton#avatarBtn:focus {{ border: 2px solid {CREAM}; }}
+QPushButton#avatarBtn:focus {{ border: {sc(2)}px solid {CREAM}; }}
 QPushButton#settingsBtn:hover {{
     background: {TEAL};
     color: {DEEP};
@@ -728,31 +885,31 @@ QPushButton#settingsBtn:hover {{
 /* ── Progress ───────────────────────────────────────────────────────────── */
 QProgressBar {{
     border: 1px solid {LINE};
-    border-radius: {R_SM}px;
+    border-radius: {sc(R_SM)}px;
     text-align: center;
     background-color: {DEEP};
     color: {CREAM};
-    height: 18px;
+    height: {sc(18)}px;
     font-family: "{MONO}";
-    font-size: {FS_MICRO}px;
+    font-size: {sc_font(FS_MICRO)}px;
 }}
-QProgressBar::chunk {{ background: {GRADIENT_COOL}; border-radius: {R_SM}px; }}
+QProgressBar::chunk {{ background: {GRADIENT_COOL}; border-radius: {sc(R_SM)}px; }}
 
 /* The downlink bar overlaps the payload canvas's own border rather than
    sitting in a row of its own, so it is set to a specific height by its
-   parent's geometry — the generic height:18px above would otherwise
+   parent's geometry — the generic height:{sc(18)}px above would otherwise
    squash its caption text against that fixed box. No border or radius at
    all: a boxed outline straddling the canvas's own edge read as a stray
    line sitting above the bar, rather than the bar reading as the canvas's
    own edge lighting up for the transfer. */
 QProgressBar#downlinkBar {{
     border: none;
-    border-radius: 0px;
+    border-radius: {sc(0)}px;
     text-align: center;
     background-color: {DEEP};
     color: {CREAM};
     font-family: "{MONO}";
-    font-size: {FS_MICRO}px;
+    font-size: {sc_font(FS_MICRO)}px;
 }}
 QProgressBar#downlinkBar::chunk {{ background: {GRADIENT_COOL}; }}
 
@@ -761,9 +918,9 @@ QLineEdit, QComboBox, QDoubleSpinBox, QSpinBox {{
     background: {RAISED};
     color: {CREAM};
     border: 1px solid {LINE};
-    border-radius: {R_CTRL}px;
-    padding: 8px 11px;
-    font-size: {FS_BODY}px;
+    border-radius: {sc(R_CTRL)}px;
+    padding: {sc(8)}px {sc(11)}px;
+    font-size: {sc_font(FS_BODY)}px;
     selection-background-color: {TEAL};
     selection-color: {DEEP};
 }}
@@ -771,13 +928,13 @@ QLineEdit:focus, QComboBox:focus, QDoubleSpinBox:focus, QSpinBox:focus {{
     border: 1px solid {TEAL};
     background: {PANEL};
 }}
-QComboBox::drop-down {{ border: none; width: 26px; }}
-QComboBox::down-arrow {{ image: url({_asset_url("caret-down.svg")}); width: 10px; height: 6px; }}
+QComboBox::drop-down {{ border: none; width: {sc(26)}px; }}
+QComboBox::down-arrow {{ image: url({_asset_url("caret-down.svg")}); width: {sc(10)}px; height: {sc(6)}px; }}
 QComboBox QAbstractItemView {{
     background: {RAISED};
     color: {CREAM};
     border: 1px solid {LINE};
-    border-radius: {R_SM}px;
+    border-radius: {sc(R_SM)}px;
     selection-background-color: {TEAL};
     selection-color: {DEEP};
     outline: none;
@@ -785,20 +942,20 @@ QComboBox QAbstractItemView {{
 /* Native spin arrows render light grey against the dark chrome. */
 QDoubleSpinBox::up-button, QSpinBox::up-button,
 QDoubleSpinBox::down-button, QSpinBox::down-button {{
-    background: transparent; border: none; width: 18px;
+    background: transparent; border: none; width: {sc(18)}px;
 }}
 QDoubleSpinBox::up-arrow, QSpinBox::up-arrow {{
-    image: url({_asset_url("caret-up.svg")}); width: 10px; height: 6px;
+    image: url({_asset_url("caret-up.svg")}); width: {sc(10)}px; height: {sc(6)}px;
 }}
 QDoubleSpinBox::down-arrow, QSpinBox::down-arrow {{
-    image: url({_asset_url("caret-down.svg")}); width: 10px; height: 6px;
+    image: url({_asset_url("caret-down.svg")}); width: {sc(10)}px; height: {sc(6)}px;
 }}
 
-QCheckBox {{ color: {SLATE}; font-size: {FS_BODY}px; spacing: 9px; }}
+QCheckBox {{ color: {SLATE}; font-size: {sc_font(FS_BODY)}px; spacing: {sc(9)}px; }}
 QCheckBox::indicator {{
-    width: 16px; height: 16px;
+    width: {sc(16)}px; height: {sc(16)}px;
     border: 1px solid {LINE};
-    border-radius: 4px;
+    border-radius: {sc(4)}px;
     background: {RAISED};
 }}
 QCheckBox::indicator:hover {{ border-color: {TEAL}; }}
@@ -816,14 +973,14 @@ QCheckBox::indicator:checked {{
    then just looked like it was missing them. {DIM} at rest, same as the
    stale-data tone, is still quiet but enough to register as "there's a
    handle here" at a glance; hover brightens to {SLATE} for feedback. */
-QScrollBar:vertical {{ background: transparent; width: 9px; margin: 0; }}
+QScrollBar:vertical {{ background: transparent; width: {sc(9)}px; margin: 0; }}
 QScrollBar::handle:vertical {{
-    background: {DIM}; border-radius: 4px; min-height: 28px;
+    background: {DIM}; border-radius: {sc(4)}px; min-height: {sc(28)}px;
 }}
 QScrollBar::handle:vertical:hover {{ background: {SLATE}; }}
-QScrollBar:horizontal {{ background: transparent; height: 9px; margin: 0; }}
+QScrollBar:horizontal {{ background: transparent; height: {sc(9)}px; margin: 0; }}
 QScrollBar::handle:horizontal {{
-    background: {DIM}; border-radius: 4px; min-width: 28px;
+    background: {DIM}; border-radius: {sc(4)}px; min-width: {sc(28)}px;
 }}
 QScrollBar::handle:horizontal:hover {{ background: {SLATE}; }}
 QScrollBar::add-line, QScrollBar::sub-line {{ height: 0; width: 0; }}

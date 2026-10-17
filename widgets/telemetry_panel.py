@@ -89,8 +89,8 @@ class TelemetryPanel(QtWidgets.QFrame):
         scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
         content = QtWidgets.QWidget()
         content_lay = QtWidgets.QVBoxLayout(content)
-        content_lay.setContentsMargins(0, 0, 6, 0)
-        content_lay.setSpacing(10)
+        content_lay.setContentsMargins(0, 0, theme.sc(6), 0)
+        content_lay.setSpacing(theme.sc(10))
         scroll.viewport().setAutoFillBackground(False)
         content.setAutoFillBackground(False)
         scroll.setWidget(content)
@@ -105,7 +105,7 @@ class TelemetryPanel(QtWidgets.QFrame):
             grid = QtWidgets.QGridLayout()
             # Leave room for the heading, which is part of the card's outline
             # rather than a widget above it.
-            grid.setContentsMargins(12, g.tab_height() + 6, 12, 10)
+            grid.setContentsMargins(theme.sc(12), g.tab_height() + theme.sc(6), theme.sc(12), theme.sc(10))
             g.setLayout(grid)
             return g
 
@@ -123,10 +123,16 @@ class TelemetryPanel(QtWidgets.QFrame):
 
             lbl = QtWidgets.QLabel(name)
             lbl.setObjectName("nameLabel")
+            # Under width pressure (a narrow panel, a long value) this is the
+            # column that should give way — the value and its unit are the
+            # actual data and must never clip. Ignored tells the grid it can
+            # shrink this one past its natural text width if something has
+            # to give, instead of shrinking val/unit below theirs.
+            lbl.setSizePolicy(QtWidgets.QSizePolicy.Ignored, QtWidgets.QSizePolicy.Preferred)
 
             glyph = QtWidgets.QLabel("")
             glyph.setObjectName("rowGlyph")
-            glyph.setFixedWidth(12)
+            glyph.setFixedWidth(theme.sc(12))
             glyph.setAlignment(QtCore.Qt.AlignCenter)
 
             val = QtWidgets.QLabel("—")
@@ -136,7 +142,7 @@ class TelemetryPanel(QtWidgets.QFrame):
 
             unit_lbl = QtWidgets.QLabel(unit)
             unit_lbl.setObjectName("unitLabel")
-            unit_lbl.setFixedWidth(36)
+            unit_lbl.setFixedWidth(theme.sc(36))
             unit_lbl.setAlignment(QtCore.Qt.AlignLeft | QtCore.Qt.AlignVCenter)
 
             if desc:
@@ -210,7 +216,7 @@ class TelemetryPanel(QtWidgets.QFrame):
         )
 
         flag_layout = QtWidgets.QVBoxLayout()
-        flag_layout.setContentsMargins(12, flag_group.tab_height() + 6, 12, 10)
+        flag_layout.setContentsMargins(theme.sc(12), flag_group.tab_height() + theme.sc(6), theme.sc(12), theme.sc(10))
         flag_group.setLayout(flag_layout)
 
         # No filter box or Copy All here any more — a small card had room
@@ -303,14 +309,14 @@ class TelemetryPanel(QtWidgets.QFrame):
         if self._flag_window is None:
             win = QtWidgets.QMainWindow()
             win.setWindowTitle("Flag Monitor — APEX GCS")
-            win.resize(900, 600)
+            win.resize(theme.sc(900), theme.sc(600))
             win.setStyleSheet(f"QMainWindow {{ background-color: {theme.PANEL}; }}")
             view = QtWidgets.QTextEdit()
             view.setReadOnly(True)
             view.document().setMaximumBlockCount(self.FLAG_MAX_LINES)
             view.setStyleSheet(
                 f"background: {theme.DEEP}; color: {theme.CREAM}; border: none;"
-                f" font-family: '{theme.MONO}'; font-size: {theme.FS_BODY}px;"
+                f" font-family: '{theme.MONO}'; font-size: {theme.sc_font(theme.FS_BODY)}px;"
                 " padding: 12px;"
             )
             for t, line in self._flag_lines:
