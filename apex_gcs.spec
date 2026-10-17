@@ -87,6 +87,17 @@
 #                                relaunch or starts it before this process's
 #                                file handles are released; scrollbar
 #                                handles are now visible at rest.
+#   v1.2.8  0310d28  2026-10-17  Dashboard no longer capped at a hardcoded
+#                                1920px width and centred with dead space
+#                                either side — fills the window on any
+#                                16:9 screen; fixed the payload canvas's
+#                                idle marks (APEX/GCS/cube logo row)
+#                                double-applying devicePixelRatio on real
+#                                HiDPI screens, which blew their sizeHint
+#                                up to ratio^2 the intended size and left
+#                                them clipped/off-centre; telemetry panel
+#                                rows no longer clip the value or unit
+#                                column under width pressure.
 # ─────────────────────────────────────────────────────────────────────────
 import os
 import sys
