@@ -16,6 +16,22 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 DisableWelcomePage=no
 PrivilegesRequired=admin
+; A silent in-app update (/VERYSILENT /SUPPRESSMSGBOXES) was observed
+; failing in production (APEX_GCS_install.log, 2026-10-14): DeleteFile on
+; signin_pixie.gif retried 4 times over ~4s against "file in use" (the
+; previous APEX_GCS.exe process still exiting), then defaulted to Abort
+; under SUPPRESSMSGBOXES and rolled the whole update back — silently, no
+; error shown, leaving the old version running. dialogs.py's _on_restart
+; already pads the handoff with a few seconds before invoking this
+; installer, but that is a race against this process's own exit, not a
+; guarantee. CloseApplications=force uses Windows Restart Manager to find
+; whichever process actually holds each file about to be replaced and
+; closes it outright before copying starts — the proper fix for this
+; failure mode instead of a longer guess. RestartApplications=no: the
+; [Run] step below (with skipifsilent) already relaunches the app itself;
+; letting Setup *also* restart whatever it closed would double-launch it.
+CloseApplications=force
+RestartApplications=no
 
 [Files]
 Source: "dist\APEX_GCS\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
